@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="description" content="Sistema de Controle de Piscinas AquaGuard">
+  <title>AquaGuard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230f766e%22/><path d=%22M8 34c7-8 15 8 23 0s15 8 25 0v9c-10 8-17-8-25 0S15 35 8 43z%22 fill=%22white%22/><circle cx=%2232%22 cy=%2221%22 r=%227%22 fill=%22%235eead4%22/></svg>">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <section id="loginView" class="login-page hidden">
+    <div class="login-card">
+      <div class="brand-mark">💧</div>
+      <h1>Welcome to AquaGuard</h1>
+      <p>Sign in to continue</p>
+      <a id="googleLogin" class="btn google hidden" href="/auth/google"><span>G</span> Continue with Google</a>
+      <div id="loginDivider" class="divider hidden"><span>or</span></div>
+      <form id="loginForm">
+        <label>Email<input name="email" type="email" placeholder="you@example.com" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" placeholder="••••••••" autocomplete="current-password" required></label>
+        <button class="btn primary full" type="submit">Sign in</button>
+      </form>
+      <p class="login-help">O primeiro acesso é criado pelas variáveis ADMIN_EMAIL e ADMIN_PASSWORD do Render.</p>
+    </div>
+  </section>
+
+  <div id="appView" class="app-shell hidden">
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-head">
+        <div class="logo-small">💧</div>
+        <div><h2>Controle de Piscinas</h2><p>Sistema Multi-Local</p></div>
+        <button id="closeMenu" class="icon-btn mobile-only" aria-label="Fechar menu">×</button>
+      </div>
+      <select id="locationSelect" class="location-select" aria-label="Local"></select>
+      <nav>
+        <a href="/dashboard" data-route="dashboard"><span>▦</span>Dashboard</a>
+        <a href="/startservice" data-route="startservice"><span>＋</span>Iniciar Serviço</a>
+        <a href="/pools" data-route="pools"><span>≈</span>Piscinas</a>
+        <a href="/locations" data-route="locations"><span>⌂</span>Locais</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="userName" class="user-name"></div>
+        <button id="logoutButton" class="btn ghost full">Sair</button>
+      </div>
+    </aside>
+    <div id="overlay" class="overlay"></div>
+    <div class="content-shell">
+      <header class="mobile-header"><button id="openMenu" class="icon-btn" aria-label="Abrir menu">☰</button><strong>AquaGuard</strong></header>
+      <main id="mainContent"></main>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
