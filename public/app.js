@@ -39,9 +39,11 @@ function showLogin() {
 async function loadBase() {
   state.locations = await api('/api/locations');
   const saved = localStorage.getItem('aquaguard_location');
-  state.locationId = state.locations.some(x=>x.id===saved) ? saved : state.locations.find(x=>x.is_active)?.id || state.locations[0]?.id || null;
+  state.locationId = state.user.role==='ADMIN'
+    ? (state.locations.some(x=>x.id===saved) ? saved : null)
+    : state.locations[0]?.id || state.user.location_id || null;
   const select = $('#locationSelect');
-  select.innerHTML = state.locations.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('');
+  select.innerHTML = `${state.user.role==='ADMIN'?'<option value="">Todos os locais</option>':''}${state.locations.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}`;
   select.value = state.locationId || '';
   state.pools = await api(`/api/pools${state.locationId?`?location_id=${state.locationId}`:''}`);
 }
@@ -148,9 +150,9 @@ function bindRoutes(){$$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go))
 document.addEventListener('DOMContentLoaded',async()=>{
   $$('[data-route]').forEach(a=>a.onclick=e=>{e.preventDefault();go(a.getAttribute('href'));});
   $('#openMenu').onclick=openMenu;$('#closeMenu').onclick=closeMenu;$('#overlay').onclick=closeMenu;
-  $('#locationSelect').onchange=async e=>{state.locationId=e.target.value;localStorage.setItem('aquaguard_location',state.locationId);state.pools=await api(`/api/pools?location_id=${state.locationId}`);renderRoute();};
+  $('#locationSelect').onchange=async e=>{state.locationId=e.target.value||null;localStorage.setItem('aquaguard_location',state.locationId||'__all__');state.pools=await api(`/api/pools${state.locationId?`?location_id=${state.locationId}`:''}`);renderRoute();};
   $('#logoutButton').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});showLogin();};
-  $('#loginForm').onsubmit=async e=>{e.preventDefault();const b=e.currentTarget.querySelector('button');try{b.disabled=true;const v=Object.fromEntries(new FormData(e.currentTarget));const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify(v)});state.user=r.user;history.replaceState({},'', '/dashboard');await showApp();}catch(err){toast(err.message,true);}finally{b.disabled=false;}};
+  $('#loginForm').onsubmit=async e=>{e.preventDefault();const b=e.currentTarget.querySelector('button');try{b.disabled=true;const v=Object.fromEntries(new FormData(e.currentTarget));const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify(v)});state.user=r.user;const next=new URLSearchParams(location.search).get('from');if(next==='/usuarios'){location.href='/usuarios';return;}history.replaceState({},'', '/dashboard');await showApp();}catch(err){toast(err.message,true);}finally{b.disabled=false;}};
   addEventListener('popstate',()=>state.user?renderRoute():showLogin());
   try{const config=await api('/api/config');if(config.googleEnabled){$('#googleLogin').classList.remove('hidden');$('#loginDivider').classList.remove('hidden');}}catch{}
   try{const me=await api('/api/me');state.user=me.user;if(location.pathname==='/login')history.replaceState({},'', '/dashboard');await showApp();}catch{showLogin();}

@@ -24,6 +24,17 @@ CREATE TABLE IF NOT EXISTS locations (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id uuid;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_location') THEN
+    ALTER TABLE users
+      ADD CONSTRAINT fk_users_location
+      FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS ix_users_location ON users(location_id);
+
 CREATE TABLE IF NOT EXISTS pools (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   location_id uuid NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,

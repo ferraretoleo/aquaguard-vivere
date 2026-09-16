@@ -23,18 +23,6 @@ async function initializeDatabase() {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await pool.query(schema);
 
-  const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-  const adminPassword = String(process.env.ADMIN_PASSWORD || '');
-  if (adminEmail && adminPassword) {
-    const hash = await bcrypt.hash(adminPassword, 12);
-    await pool.query(
-      `INSERT INTO users(name,email,password_hash,role)
-       VALUES($1,$2,$3,'ADMIN')
-       ON CONFLICT ((lower(email))) DO UPDATE SET name=EXCLUDED.name, password_hash=EXCLUDED.password_hash, role='ADMIN', is_active=true, updated_at=now()`,
-      [process.env.ADMIN_NAME || 'Administrador', adminEmail, hash]
-    );
-  }
-
   const locationResult = await pool.query(
     `INSERT INTO locations(name,address,report_emails,is_active)
      SELECT 'Vivere Palhano','Rua Ernani Lacerda de Athayde, 1200',ARRAY['leoferrareto2013@gmail.com','residencialviverepalhano@gmail.com','rodrigosillva5835@gmail.com'],true
@@ -43,6 +31,21 @@ async function initializeDatabase() {
   );
   let locationId = locationResult.rows[0]?.id;
   if (!locationId) locationId = (await pool.query(`SELECT id FROM locations ORDER BY created_at LIMIT 1`)).rows[0]?.id;
+
+  const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const adminPassword = String(process.env.ADMIN_PASSWORD || '');
+  if (adminEmail && adminPassword && locationId) {
+    const hash = await bcrypt.hash(adminPassword, 12);
+    await pool.query(
+      `INSERT INTO users(name,email,password_hash,role,location_id)
+       VALUES($1,$2,$3,'ADMIN',$4)
+       ON CONFLICT ((lower(email))) DO UPDATE
+       SET name=EXCLUDED.name, password_hash=EXCLUDED.password_hash, role='ADMIN',
+           location_id=COALESCE(users.location_id,EXCLUDED.location_id),
+           is_active=true, updated_at=now()`,
+      [process.env.ADMIN_NAME || 'Administrador', adminEmail, hash, locationId]
+    );
+  }
 
   if (locationId) {
     await pool.query(
@@ -55,6 +58,8 @@ async function initializeDatabase() {
        SELECT $1,'Piscina Adulto','Área de Lazer',200000,true
        WHERE NOT EXISTS (SELECT 1 FROM pools WHERE location_id=$1 AND name='Piscina Adulto')`, [locationId]
     );
+    await pool.query(`UPDATE users SET location_id=$1,updated_at=now() WHERE location_id IS NULL`, [locationId]);
+    await pool.query(`ALTER TABLE users ALTER COLUMN location_id SET NOT NULL`);
   }
 
   const historyCount = Number((await pool.query(`SELECT count(*)::int AS count FROM maintenances WHERE status='COMPLETED'`)).rows[0].count);

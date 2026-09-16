@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <title>Usuários | AquaGuard</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/usuarios.css">
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+  <main class="users-page">
+    <header class="users-header">
+      <div>
+        <a class="back-link" href="/dashboard">← Voltar ao AquaGuard</a>
+        <h1>Gerenciar Usuários</h1>
+        <p>Página avulsa para controlar quem pode acessar o sistema.</p>
+      </div>
+      <button id="newUser" class="btn primary">＋ Novo Usuário</button>
+    </header>
+    <section class="panel users-panel">
+      <div class="users-toolbar">
+        <input id="userSearch" type="search" placeholder="Pesquisar por nome ou e-mail">
+        <span id="userCount"></span>
+      </div>
+      <div id="usersList" class="users-list"><div class="empty">Carregando...</div></div>
+    </section>
+  </main>
+  <div id="modalRoot"></div>
+  <script src="/usuarios.js" defer></script>
+</body>
+</html>

@@ -24,6 +24,7 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Envio do relatório de evolução química por e-mail
 - Layout responsivo para celular
 - Importação automática dos 50 registros coletados do AquaGuard atual
+- Página avulsa de usuários em `/usuarios`, visível somente para administradores
 
 ## Publicação rápida
 
@@ -86,6 +87,18 @@ npm start
 ```
 
 Acesse `http://localhost:3000`.
+
+## Cadastro de usuários
+
+A página de usuários não aparece no menu principal. Entre como administrador e acesse diretamente:
+
+`https://SEU-ENDERECO/usuarios`
+
+Nela é possível cadastrar, editar, redefinir senha, definir o nível de acesso, selecionar o local e ativar ou desativar usuários.
+
+Cada usuário comum enxerga somente o local ao qual está vinculado, incluindo as piscinas e manutenções desse local. Usuários com perfil `ADMIN` podem visualizar e administrar todos os locais, usuários, piscinas e manutenções.
+
+O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
 
 ## Segurança
 

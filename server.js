@@ -32,7 +32,7 @@ function asyncRoute(fn) {
 }
 
 function publicUser(row) {
-  return { id: row.id, name: row.name, email: row.email, role: row.role };
+  return { id: row.id, name: row.name, email: row.email, role: row.role, location_id: row.location_id };
 }
 
 function signIn(res, user) {
@@ -45,9 +45,12 @@ function signIn(res, user) {
   });
 }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   try {
-    req.user = jwt.verify(req.cookies.aquaguard_token || '', JWT_SECRET);
+    const decoded = jwt.verify(req.cookies.aquaguard_token || '', JWT_SECRET);
+    const result = await pool.query(`SELECT id,name,email,role,location_id FROM users WHERE id=$1 AND is_active=true`, [decoded.id]);
+    if (!result.rows[0]) return res.status(401).json({ error: 'Usuário inativo ou não encontrado.' });
+    req.user = publicUser(result.rows[0]);
     next();
   } catch {
     res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
@@ -61,6 +64,15 @@ function requireAdmin(req, res, next) {
 
 function validUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function requestedLocation(req, value) {
+  if (req.user.role !== 'ADMIN') return req.user.location_id;
+  return validUuid(value) ? value : null;
+}
+
+function canAccessLocation(req, locationId) {
+  return req.user.role === 'ADMIN' || req.user.location_id === locationId;
 }
 
 function emailList(value) {
@@ -189,11 +201,11 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
   const tokens = await tokenResponse.json();
   const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: { authorization: `Bearer ${tokens.access_token}` } });
   const profile = await profileResponse.json();
+  const registered = (await pool.query(`SELECT * FROM users WHERE lower(email)=lower($1) AND is_active=true`, [profile.email])).rows[0];
+  if (!registered) return res.redirect('/login?erro=usuario-nao-cadastrado');
   const result = await pool.query(
-    `INSERT INTO users(name,email,google_id,role)
-     VALUES($1,lower($2),$3,CASE WHEN lower($2)=lower($4) THEN 'ADMIN' ELSE 'USER' END)
-     ON CONFLICT ((lower(email))) DO UPDATE SET name=EXCLUDED.name, google_id=EXCLUDED.google_id, is_active=true, updated_at=now()
-     RETURNING *`, [profile.name || profile.email, profile.email, profile.sub, process.env.ADMIN_EMAIL || '']
+    `UPDATE users SET google_id=$1,updated_at=now() WHERE id=$2 RETURNING *`,
+    [profile.sub, registered.id]
   );
   signIn(res, result.rows[0]);
   res.redirect('/dashboard');
@@ -201,8 +213,66 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
 
 app.use('/api', requireAuth);
 
+app.get('/api/users', requireAdmin, asyncRoute(async (_req, res) => {
+  const result = await pool.query(
+    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.location_id,l.name AS location_name,u.created_at,u.updated_at
+     FROM users u
+     JOIN locations l ON l.id=u.location_id
+     ORDER BY l.name,u.name,u.email`
+  );
+  res.json(result.rows);
+}));
+
+app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const role = req.body.role === 'ADMIN' ? 'ADMIN' : 'USER';
+  const locationId = String(req.body.location_id || '');
+  if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
+  if (!validUuid(locationId)) return res.status(400).json({ error: 'Selecione o local do usuário.' });
+  if (!(await pool.query(`SELECT 1 FROM locations WHERE id=$1`, [locationId])).rowCount) return res.status(400).json({ error: 'O local selecionado não existe.' });
+  if (password.length < 8) return res.status(400).json({ error: 'A senha deve ter pelo menos 8 caracteres.' });
+  const hash = await bcrypt.hash(password, 12);
+  const result = await pool.query(
+    `INSERT INTO users(name,email,password_hash,role,is_active,location_id)
+     VALUES($1,$2,$3,$4,$5,$6)
+     RETURNING id,name,email,role,is_active,location_id,created_at,updated_at`,
+    [name, email, hash, role, req.body.is_active !== false, locationId]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const role = req.body.role === 'ADMIN' ? 'ADMIN' : 'USER';
+  const locationId = String(req.body.location_id || '');
+  const isSelf = req.params.id === req.user.id;
+  if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
+  if (!validUuid(locationId)) return res.status(400).json({ error: 'Selecione o local do usuário.' });
+  if (!(await pool.query(`SELECT 1 FROM locations WHERE id=$1`, [locationId])).rowCount) return res.status(400).json({ error: 'O local selecionado não existe.' });
+  if (password && password.length < 8) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 8 caracteres.' });
+  if (isSelf && (role !== 'ADMIN' || req.body.is_active === false)) return res.status(400).json({ error: 'Você não pode remover seu próprio acesso de administrador.' });
+  const hash = password ? await bcrypt.hash(password, 12) : null;
+  const result = await pool.query(
+    `UPDATE users
+     SET name=$1,email=$2,role=$3,is_active=$4,location_id=$5,
+         password_hash=CASE WHEN $6::text IS NULL THEN password_hash ELSE $6 END,
+         updated_at=now()
+     WHERE id=$7
+     RETURNING id,name,email,role,is_active,location_id,created_at,updated_at`,
+    [name, email, role, req.body.is_active !== false, locationId, hash, req.params.id]
+  );
+  if (!result.rows[0]) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  res.json(result.rows[0]);
+}));
+
 app.get('/api/locations', asyncRoute(async (_req, res) => {
-  const result = await pool.query(`SELECT * FROM locations ORDER BY name`);
+  const result = _req.user.role === 'ADMIN'
+    ? await pool.query(`SELECT * FROM locations ORDER BY name`)
+    : await pool.query(`SELECT * FROM locations WHERE id=$1 ORDER BY name`, [_req.user.location_id]);
   res.json(result.rows);
 }));
 
@@ -230,7 +300,8 @@ app.delete('/api/locations/:id', requireAdmin, asyncRoute(async (req, res) => {
 app.get('/api/pools', asyncRoute(async (req, res) => {
   const args = [];
   let where = '';
-  if (validUuid(req.query.location_id)) { args.push(req.query.location_id); where = `WHERE p.location_id=$1`; }
+  const locationId = requestedLocation(req, req.query.location_id);
+  if (locationId) { args.push(locationId); where = `WHERE p.location_id=$1`; }
   const result = await pool.query(
     `SELECT p.*,l.name AS location_name FROM pools p JOIN locations l ON l.id=p.location_id ${where} ORDER BY p.name`, args
   );
@@ -259,7 +330,7 @@ app.delete('/api/pools/:id', requireAdmin, asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/dashboard', asyncRoute(async (req, res) => {
-  const locationId = validUuid(req.query.location_id) ? req.query.location_id : null;
+  const locationId = requestedLocation(req, req.query.location_id);
   const poolId = validUuid(req.query.pool_id) ? req.query.pool_id : null;
   const params = [];
   const conditions = [`m.status='COMPLETED'`];
@@ -279,7 +350,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
 app.get('/api/maintenances/active', asyncRoute(async (req, res) => {
   const args = [req.user.id];
   let extra = '';
-  if (validUuid(req.query.location_id)) { args.push(req.query.location_id); extra = `AND p.location_id=$2`; }
+  const locationId = requestedLocation(req, req.query.location_id);
+  if (locationId) { args.push(locationId); extra = `AND p.location_id=$2`; }
   const result = await pool.query(
     `SELECT m.*,p.name AS pool_name,p.location_id,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE m.status='STARTED' AND m.created_by=$1 ${extra} ORDER BY m.started_at DESC LIMIT 1`, args
   );
@@ -288,6 +360,8 @@ app.get('/api/maintenances/active', asyncRoute(async (req, res) => {
 
 app.post('/api/maintenances/start', upload.array('photos', 5), asyncRoute(async (req, res) => {
   if (!validUuid(req.body.pool_id) || !String(req.body.executor || '').trim()) return res.status(400).json({ error: 'Informe a piscina e o executante.' });
+  const selectedPool = (await pool.query(`SELECT location_id FROM pools WHERE id=$1 AND is_active=true`, [req.body.pool_id])).rows[0];
+  if (!selectedPool || !canAccessLocation(req, selectedPool.location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -300,6 +374,8 @@ app.post('/api/maintenances/start', upload.array('photos', 5), asyncRoute(async 
 
 app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute(async (req, res) => {
   const services = JSON.parse(req.body.services || '[]');
+  const target = (await pool.query(`SELECT p.location_id FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
+  if (!target || !canAccessLocation(req, target.location_id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -320,18 +396,21 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
 app.get('/api/maintenances/:id', asyncRoute(async (req, res) => {
   const data = await getMaintenance(req.params.id);
   if (!data) return res.status(404).json({ error: 'Manutenção não encontrada.' });
+  if (!canAccessLocation(req, data.location_id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
   res.json({ ...data, whatsapp_text: buildMaintenanceText(data) });
 }));
 
 app.get('/api/photos/:id', asyncRoute(async (req, res) => {
-  const result = await pool.query(`SELECT mime_type,file_data FROM maintenance_photos WHERE id=$1`, [req.params.id]);
+  const result = await pool.query(`SELECT mp.mime_type,mp.file_data,p.location_id FROM maintenance_photos mp JOIN maintenances m ON m.id=mp.maintenance_id JOIN pools p ON p.id=m.pool_id WHERE mp.id=$1`, [req.params.id]);
   if (!result.rows[0]) return res.sendStatus(404);
+  if (!canAccessLocation(req, result.rows[0].location_id)) return res.sendStatus(403);
   res.type(result.rows[0].mime_type).send(result.rows[0].file_data);
 }));
 
 app.get('/api/maintenances/:id/report.pdf', asyncRoute(async (req, res) => {
   const data = await getMaintenance(req.params.id);
   if (!data) return res.sendStatus(404);
+  if (!canAccessLocation(req, data.location_id)) return res.sendStatus(403);
   const pdf = await createReportPdf(data);
   res.setHeader('Content-Disposition', `attachment; filename="relatorio-${data.pool_name.replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.pdf"`);
   res.type('application/pdf').send(pdf);
@@ -341,6 +420,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   if (!validUuid(req.body.pool_id)) return res.status(400).json({ error: 'Selecione uma piscina.' });
   const p = await pool.query(`SELECT p.*,l.name AS location_name,l.report_emails FROM pools p JOIN locations l ON l.id=p.location_id WHERE p.id=$1`, [req.body.pool_id]);
   if (!p.rows[0]) return res.sendStatus(404);
+  if (!canAccessLocation(req, p.rows[0].location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
   const rows = (await pool.query(`SELECT * FROM maintenances WHERE pool_id=$1 AND status='COMPLETED' ORDER BY started_at DESC LIMIT 60`, [req.body.pool_id])).rows;
   const transport = mailTransport();
   if (!transport) return res.status(503).json({ error: 'Configure o SMTP no Render para enviar relatórios.' });
@@ -360,11 +440,13 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
 }));
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/usuarios', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'usuarios.html')));
 app.get(/^(?!\/api\/|\/auth\/|\/health$).*/, (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 app.use((error, _req, res, _next) => {
   console.error(error);
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Cada foto deve ter no máximo 6 MB.' });
+  if (error.code === '23505') return res.status(409).json({ error: 'Já existe um usuário cadastrado com este e-mail.' });
   res.status(500).json({ error: 'Não foi possível concluir a operação.', detail: isProduction ? undefined : error.message });
 });
 
