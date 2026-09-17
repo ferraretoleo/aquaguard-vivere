@@ -92,6 +92,7 @@ function buildMaintenanceText(m) {
     `*pH:* ${m.ph ?? '-'}`,
     `*Cloro livre:* ${m.chlorine ?? '-'} ppm`,
     `*Alcalinidade:* ${m.alkalinity ?? '-'} ppm`,
+    `*Estabilizador (CYA):* ${m.stabilizer ?? '-'} ppm`,
     '',
     `*Serviços:* ${(m.services || []).join(', ') || '-'}`,
     m.notes ? `*Observações:* ${m.notes}` : ''
@@ -133,6 +134,7 @@ function createReportPdf(data, title = 'Relatório de Manutenção') {
   doc.text(`pH: ${data.ph ?? '-'}`);
   doc.text(`Cloro livre: ${data.chlorine ?? '-'} ppm`);
   doc.text(`Alcalinidade: ${data.alkalinity ?? '-'} ppm`);
+  doc.text(`Estabilizador (CYA): ${data.stabilizer ?? '-'} ppm`);
   doc.moveDown();
   doc.fontSize(14).fillColor('#111827').text('Serviços executados');
   doc.fontSize(11).fillColor('#374151').text((data.services || []).map(s => `• ${s}`).join('\n') || 'Nenhum serviço informado.');
@@ -341,8 +343,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     pool.query(`SELECT count(*)::int AS count FROM pools p WHERE p.is_active=true ${locationId ? `AND p.location_id=$1` : ''}`, locationId ? [locationId] : []),
     pool.query(`SELECT count(*)::int AS count FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where} AND (m.started_at AT TIME ZONE 'America/Sao_Paulo')::date=(now() AT TIME ZONE 'America/Sao_Paulo')::date`, params),
     pool.query(`SELECT count(*)::int AS count FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where}`, params),
-    pool.query(`SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.services,m.notes,p.name AS pool_name,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE ${where} ORDER BY m.started_at DESC LIMIT 100`, params),
-    pool.query(`SELECT m.id,m.started_at,m.ph,m.chlorine,m.alkalinity,p.name AS pool_name FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where} ORDER BY m.started_at ASC LIMIT 100`, params)
+    pool.query(`SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.notes,p.name AS pool_name,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE ${where} ORDER BY m.started_at DESC LIMIT 100`, params),
+    pool.query(`SELECT m.id,m.started_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,p.name AS pool_name FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where} ORDER BY m.started_at ASC LIMIT 100`, params)
   ]);
   res.json({ stats: { activePools: activePools.rows[0].count, today: today.rows[0].count, total: total.rows[0].count }, history: history.rows, trends: trends.rows });
 }));
@@ -373,6 +375,10 @@ app.post('/api/maintenances/start', upload.array('photos', 5), asyncRoute(async 
 }));
 
 app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute(async (req, res) => {
+  const measurements = ['ph', 'chlorine', 'alkalinity', 'stabilizer'];
+  if (measurements.some(field => req.body[field] === undefined || req.body[field] === '' || !Number.isFinite(Number(req.body[field])))) {
+    return res.status(400).json({ error: 'Informe todas as medições químicas, incluindo o estabilizador em ppm.' });
+  }
   const services = JSON.parse(req.body.services || '[]');
   const target = (await pool.query(`SELECT p.location_id FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
   if (!target || !canAccessLocation(req, target.location_id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
@@ -380,8 +386,8 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `UPDATE maintenances SET status='COMPLETED',ended_at=now(),ph=$1,chlorine=$2,alkalinity=$3,services=$4,notes=$5,updated_at=now() WHERE id=$6 AND status='STARTED' RETURNING *`,
-      [req.body.ph || null, req.body.chlorine || null, req.body.alkalinity || null, services, String(req.body.notes || '').trim() || null, req.params.id]
+      `UPDATE maintenances SET status='COMPLETED',ended_at=now(),ph=$1,chlorine=$2,alkalinity=$3,stabilizer=$4,services=$5,notes=$6,updated_at=now() WHERE id=$7 AND status='STARTED' RETURNING *`,
+      [req.body.ph, req.body.chlorine, req.body.alkalinity, req.body.stabilizer, services, String(req.body.notes || '').trim() || null, req.params.id]
     );
     if (!result.rows[0]) {
       await client.query('ROLLBACK');
@@ -430,7 +436,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   const pdfDone = new Promise(resolve => doc.on('end', () => resolve(Buffer.concat(chunks))));
   doc.fontSize(22).fillColor('#0f766e').text('AquaGuard', { align: 'center' });
   doc.fontSize(15).fillColor('#111827').text(`Evolução Química - ${p.rows[0].name}`, { align: 'center' }).moveDown();
-  rows.forEach(r => doc.fontSize(9).fillColor('#374151').text(`${new Date(r.started_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'})}   pH ${r.ph ?? '-'}   Cloro ${r.chlorine ?? '-'}   Alcalinidade ${r.alkalinity ?? '-'}`));
+  rows.forEach(r => doc.fontSize(9).fillColor('#374151').text(`${new Date(r.started_at).toLocaleDateString('pt-BR',{timeZone:'America/Sao_Paulo'})}   pH ${r.ph ?? '-'}   Cloro ${r.chlorine ?? '-'}   Alcalinidade ${r.alkalinity ?? '-'}   Estabilizador ${r.stabilizer ?? '-'} ppm`));
   doc.end();
   const pdf = await pdfDone;
   const recipients = emailList(req.body.emails?.length ? req.body.emails : p.rows[0].report_emails);

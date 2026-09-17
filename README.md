@@ -15,7 +15,7 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 ## Funcionalidades
 
 - Painel com piscinas ativas, manutenções do dia e total de registros
-- Evolução de pH, cloro e alcalinidade
+- Evolução de pH, cloro, alcalinidade e estabilizador de cloro (ácido cianúrico/CYA)
 - Histórico completo e detalhes de cada manutenção
 - Início e fechamento do serviço em momentos diferentes
 - Fotos no início e no fim do serviço
@@ -23,7 +23,6 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Relatório PDF e texto pronto para WhatsApp
 - Envio do relatório de evolução química por e-mail
 - Layout responsivo para celular
-- Importação automática dos 50 registros coletados do AquaGuard atual
 - Página avulsa de usuários em `/usuarios`, visível somente para administradores
 
 ## Publicação rápida
@@ -35,7 +34,33 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 5. Informe uma senha forte em `ADMIN_PASSWORD`.
 6. Após a publicação, acesse a URL do Render e entre com `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
 
-O sistema cria as tabelas, o local Vivere Palhano, as piscinas Adulto e Infantil e o histórico existente na primeira inicialização.
+O sistema cria as tabelas, o local Vivere Palhano e as piscinas Adulto e Infantil na primeira inicialização.
+
+## Nova medição: estabilizador de cloro
+
+O fechamento da manutenção exige o valor do estabilizador de cloro (ácido cianúrico/CYA) em ppm. O valor aparece no painel, histórico, detalhes, relatório PDF, relatório por e-mail e texto para WhatsApp.
+
+| Faixa | Classificação | Orientação |
+| --- | --- | --- |
+| Abaixo de 30 ppm | Ruim (Insuficiente) | Adicionar estabilizador puro ou usar cloro estabilizado. |
+| 30 a 50 ppm | Bom (Ideal) | Manter a rotina e medir novamente em 2 a 4 semanas. |
+| 51 a 59 ppm | Atenção | Evitar adicionar estabilizador e acompanhar. |
+| 60 a 80 ppm | Aceitável (Ideal por Sal) | Manter em piscina de sal; com cloro comum, suspender pastilhas temporariamente. |
+| 81 a 100 ppm | Alto (Atenção) | Não adicionar estabilizador e planejar redução por diluição. |
+| Acima de 100 ppm | Excesso (Bloqueio) | Drenar parcialmente, em geral 30% a 50%, e completar com água limpa. |
+
+## Limpar as manutenções e preservar cadastros
+
+O arquivo `limpar_manutencoes.sql` apaga definitivamente todas as manutenções e fotos, preservando locais, usuários e piscinas.
+
+Use nesta ordem:
+
+1. Publique esta nova versão no Render e aguarde o status **Live**. Na inicialização, ela adicionará a coluna `stabilizer` ao banco.
+2. Se quiser conservar o histórico, faça antes um backup no Neon.
+3. No Neon, abra **SQL Editor**, copie o conteúdo de `limpar_manutencoes.sql` e execute.
+4. Confira o resultado da consulta final: `manutencoes` deve ser zero e os totais de locais, usuários e piscinas devem permanecer.
+
+A importação automática do histórico antigo foi removida. Assim, o Render não recriará os registros apagados quando reiniciar.
 
 ## Cloudflare
 

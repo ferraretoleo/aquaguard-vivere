@@ -12,13 +12,6 @@ const pool = new Pool({
   idleTimeoutMillis: 30000
 });
 
-function parsePtDate(value) {
-  const m = String(value || '').match(/(\d{2})\/(\d{2})\/(\d{4}) às (\d{2}):(\d{2})/);
-  if (!m) return null;
-  const [, day, month, year, hour, minute] = m;
-  return `${year}-${month}-${day}T${hour}:${minute}:00-03:00`;
-}
-
 async function initializeDatabase() {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await pool.query(schema);
@@ -62,24 +55,6 @@ async function initializeDatabase() {
     await pool.query(`ALTER TABLE users ALTER COLUMN location_id SET NOT NULL`);
   }
 
-  const historyCount = Number((await pool.query(`SELECT count(*)::int AS count FROM maintenances WHERE status='COMPLETED'`)).rows[0].count);
-  if (historyCount === 0 && locationId) {
-    const historyPath = path.join(__dirname, 'data', 'history.json');
-    if (fs.existsSync(historyPath)) {
-      const history = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
-      const pools = (await pool.query(`SELECT id,name FROM pools WHERE location_id=$1`, [locationId])).rows;
-      for (const item of history) {
-        const poolName = item.pool.replace(/\s+-\s+Vivere Palhano$/i, '');
-        const targetPool = pools.find(p => p.name === poolName);
-        if (!targetPool) continue;
-        await pool.query(
-          `INSERT INTO maintenances(pool_id,executor,status,started_at,ended_at,ph,chlorine,alkalinity,services,notes)
-           VALUES($1,$2,'COMPLETED',$3,$4,$5,$6,$7,$8,$9)`,
-          [targetPool.id, item.executor, parsePtDate(item.started), parsePtDate(item.ended), item.ph, item.chlorine, item.alkalinity, item.services, item.notes || null]
-        );
-      }
-    }
-  }
 }
 
 module.exports = { pool, initializeDatabase };
