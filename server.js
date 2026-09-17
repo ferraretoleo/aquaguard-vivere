@@ -161,6 +161,7 @@ function mailTransport() {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/config', (_req, res) => res.json({ googleEnabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) }));
+app.get('/vendor/html2canvas.min.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules', 'html2canvas', 'dist', 'html2canvas.min.js')));
 
 app.post('/api/auth/login', asyncRoute(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();

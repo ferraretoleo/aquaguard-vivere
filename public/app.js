@@ -134,6 +134,62 @@ function historyCard(m) {
   return `<article class="history-card"><div><h3>${esc(m.pool_name)} - ${esc(m.location_name)}</h3><p>${esc(m.executor)}</p><p>${brDate(m.started_at)}</p></div><div><div class="chips"><span class="chip ${isIdeal('ph',m.ph)?'good':''}">pH: ${esc(m.ph)}</span><span class="chip ${isIdeal('chlorine',m.chlorine)?'good':''}">Cloro: ${esc(m.chlorine)}</span><span class="chip ${isIdeal('alk',m.alkalinity)?'good':''}">Alc: ${esc(m.alkalinity)}</span><span class="chip ${isIdeal('stabilizer',m.stabilizer)?'good':''}">Estab: ${esc(m.stabilizer??'-')} ppm</span></div><p>${(m.services||[]).length} serviço(s) realizado(s)</p></div><button class="history-open" data-id="${m.id}" title="Ver detalhes">⌕</button></article>`;
 }
 
+function canvasBlob(canvas){
+  return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Não foi possível criar a imagem.')),'image/png'));
+}
+
+async function createMaintenanceImage(m){
+  if(typeof html2canvas!=='function')throw new Error('O gerador de imagem não foi carregado.');
+  const modal=$('.modal');
+  if(!modal)throw new Error('Os detalhes da manutenção não estão abertos.');
+  const host=document.createElement('div');
+  host.className='share-render-host';
+  const clone=modal.cloneNode(true);
+  clone.classList.add('share-render-card');
+  clone.querySelectorAll('[data-html2canvas-ignore]').forEach(el=>el.remove());
+  host.appendChild(clone);
+  document.body.appendChild(host);
+  try{
+    if(document.fonts?.ready)await document.fonts.ready;
+    const canvas=await html2canvas(clone,{backgroundColor:'#ffffff',scale:2,useCORS:true,logging:false,windowWidth:700});
+    const blob=await canvasBlob(canvas);
+    const safeName=String(m.pool_name||'piscina').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').toLowerCase();
+    return {blob,file:new File([blob],`manutencao-${safeName}.png`,{type:'image/png'})};
+  }finally{host.remove();}
+}
+
+async function shareMaintenanceImage(m,imagePromise){
+  const button=$('#copyWhats');
+  try{
+    if(button){button.disabled=true;button.textContent='Gerando imagem...';}
+    const generated=await imagePromise;
+    if(generated.error)throw generated.error;
+    const {blob,file}=generated;
+    if(navigator.clipboard?.write&&window.ClipboardItem){
+      try{
+        await navigator.clipboard.write([new ClipboardItem({'image/png':blob})]);
+        toast('Imagem copiada. Agora é só colar no WhatsApp.');
+        return;
+      }catch{}
+    }
+    if(navigator.share&&navigator.canShare?.({files:[file]})){
+      try{
+        await navigator.share({title:'Detalhes da manutenção',text:`Manutenção da ${m.pool_name}`,files:[file]});
+        return;
+      }catch(error){if(error.name==='AbortError')return;}
+    }
+    const link=document.createElement('a');
+    link.href=URL.createObjectURL(blob);link.download=file.name;link.click();
+    setTimeout(()=>URL.revokeObjectURL(link.href),1000);
+    toast('A imagem foi baixada para você enviar no WhatsApp.');
+  }catch(error){
+    try{await navigator.clipboard.writeText(m.whatsapp_text);toast('O navegador não permitiu copiar a imagem. O texto foi copiado.',true);}
+    catch{toast(error.message||'Não foi possível gerar a imagem.',true);}
+  }finally{
+    if(button){button.disabled=false;button.textContent='Copiar para WhatsApp';}
+  }
+}
+
 async function openMaintenance(id) {
   try {
     const m=await api(`/api/maintenances/${id}`);
@@ -142,8 +198,9 @@ async function openMaintenance(id) {
       <h3>Medições Químicas</h3><div class="measurements"><div class="measure"><span>pH</span><strong>${esc(m.ph)}</strong><small>${isIdeal('ph',m.ph)?'✓ Ideal':'⚠ Verificar'} · Ref. 7,2 a 7,6</small></div><div class="measure"><span>Cloro Livre</span><strong>${esc(m.chlorine)}</strong><small>${isIdeal('chlorine',m.chlorine)?'✓ Ideal':'⚠ Verificar'} · Ref. 1 a 3 ppm</small></div><div class="measure"><span>Alcalinidade</span><strong>${esc(m.alkalinity)}</strong><small>${isIdeal('alk',m.alkalinity)?'✓ Ideal':'⚠ Verificar'} · Ref. 80 a 120 ppm</small></div><div class="measure"><span>Estabilizador (CYA)</span><strong>${esc(m.stabilizer??'-')} ppm</strong><small>${esc(cya.label)} · Ref. 30 a 50 ppm</small></div></div>
       <div class="info"><strong>${esc(cya.label)}</strong><br>${esc(cya.meaning)}<br><strong>O que fazer:</strong> ${esc(cya.action)}</div>
       <h3>Serviços Executados</h3><div class="chips">${(m.services||[]).map(s=>`<span class="chip good">✓ ${esc(s)}</span>`).join('')||'-'}</div>${m.notes?`<h3>Observações</h3><p>${esc(m.notes)}</p>`:''}
-      <div class="form-actions"><a class="btn outline" href="/api/maintenances/${m.id}/report.pdf">Gerar Relatório</a><button id="copyWhats" class="btn primary">Copiar para WhatsApp</button></div>`);
-    $('#copyWhats').onclick=async()=>{await navigator.clipboard.writeText(m.whatsapp_text);toast('Relatório copiado para o WhatsApp.');};
+      <div class="form-actions" data-html2canvas-ignore><a class="btn outline" href="/api/maintenances/${m.id}/report.pdf">Gerar Relatório</a><button id="copyWhats" class="btn primary">Copiar para WhatsApp</button></div>`);
+    const imagePromise=createMaintenanceImage(m).catch(error=>({error}));
+    $('#copyWhats').onclick=()=>shareMaintenanceImage(m,imagePromise);
   } catch(e){toast(e.message,true);}
 }
 
@@ -174,7 +231,7 @@ function locationCard(l){return `<article class="item-card"><div class="item-mai
 function locationModal(l=null){openModal(l?'Editar Local':'Novo Local',`<form id="locationForm"><div class="form-grid"><div class="field full-row"><span>Nome do Local *</span><input name="name" value="${esc(l?.name||'')}" placeholder="Ex: Vivere Palhano" required></div><div class="field full-row"><span>Endereço</span><input name="address" value="${esc(l?.address||'')}" placeholder="Ex: Rua ABC, 123"></div><div class="field full-row"><span>Emails para Relatórios</span><textarea name="report_emails" placeholder="Um e-mail por linha">${esc((l?.report_emails||[]).join('\n'))}</textarea></div><div class="field"><span>Status</span><select name="is_active"><option value="true" ${l?.is_active!==false?'selected':''}>Ativo</option><option value="false" ${l?.is_active===false?'selected':''}>Inativo</option></select></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">${l?'Salvar':'Criar'}</button></div></form>`);$('#locationForm').onsubmit=async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.currentTarget));v.is_active=v.is_active==='true';try{await api(l?`/api/locations/${l.id}`:'/api/locations',{method:l?'PUT':'POST',body:JSON.stringify(v)});closeModal();toast(`Local ${l?'atualizado':'criado'}.`);await loadBase();renderLocations();}catch(err){toast(err.message,true);}};}
 async function disableLocation(id){if(!confirm('Deseja desativar este local? Os dados e o histórico serão preservados.'))return;try{await api(`/api/locations/${id}`,{method:'DELETE'});toast('Local desativado.');await loadBase();renderLocations();}catch(e){toast(e.message,true);}}
 
-function openModal(title,body){$('#modalRoot').innerHTML=`<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-close-modal aria-label="Fechar">×</button></div><div class="modal-body">${body}</div></section></div>`;$$('[data-close-modal]').forEach(b=>b.onclick=closeModal);$('.modal-backdrop').onclick=e=>{if(e.target===e.currentTarget)closeModal();};}
+function openModal(title,body){$('#modalRoot').innerHTML=`<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-close-modal data-html2canvas-ignore aria-label="Fechar">×</button></div><div class="modal-body">${body}</div></section></div>`;$$('[data-close-modal]').forEach(b=>b.onclick=closeModal);$('.modal-backdrop').onclick=e=>{if(e.target===e.currentTarget)closeModal();};}
 function closeModal(){$('#modalRoot').innerHTML='';}
 function bindRoutes(){$$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));}
 

@@ -22,6 +22,7 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Fotos no início e no fim do serviço
 - Cadastro de locais e piscinas
 - Relatório PDF e texto pronto para WhatsApp
+- Geração de imagem dos detalhes da manutenção para copiar, compartilhar ou baixar no WhatsApp
 - Envio do relatório de evolução química por e-mail
 - Layout responsivo para celular
 - Página avulsa de usuários em `/usuarios`, visível somente para administradores
