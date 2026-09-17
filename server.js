@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const crypto = require('crypto');
+const dns = require('dns').promises;
+const net = require('net');
 const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -149,17 +151,55 @@ function createReportPdf(data, title = 'Relatório de Manutenção') {
   return done;
 }
 
-function mailTransport() {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASSWORD) return null;
+function smtpConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
+}
+
+function mailTransport(connectionHost = process.env.SMTP_HOST) {
+  if (!smtpConfigured()) return null;
+  const configuredHost = String(process.env.SMTP_HOST);
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
+    host: connectionHost,
     port: Number(process.env.SMTP_PORT || 465),
     secure: String(process.env.SMTP_SECURE || 'true') === 'true',
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    tls: net.isIP(connectionHost) ? { servername: configuredHost } : undefined,
     connectionTimeout: 10000,
     greetingTimeout: 10000,
     socketTimeout: 20000
   });
+}
+
+async function sendSmtpMail(message) {
+  if (!smtpConfigured()) {
+    const error = new Error('SMTP não configurado.');
+    error.code = 'ESMTP_CONFIG';
+    throw error;
+  }
+  const configuredHost = String(process.env.SMTP_HOST);
+  let ipv4Hosts;
+  if (net.isIPv4(configuredHost)) {
+    ipv4Hosts = [configuredHost];
+  } else {
+    ipv4Hosts = [...new Set(await dns.resolve4(configuredHost))];
+  }
+  if (!ipv4Hosts.length) {
+    const error = new Error(`Nenhum endereço IPv4 encontrado para ${configuredHost}.`);
+    error.code = 'EDNS_IPV4';
+    throw error;
+  }
+  const retryableCodes = new Set(['ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT']);
+  let lastError;
+  for (const ipv4Host of ipv4Hosts) {
+    try {
+      const info = await mailTransport(ipv4Host).sendMail(message);
+      return { info, ipv4Host };
+    } catch (error) {
+      lastError = error;
+      if (!retryableCodes.has(error.code)) throw error;
+    }
+  }
+  throw lastError;
 }
 
 function escapeHtml(value) {
@@ -450,14 +490,13 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
   try {
     const data = await getMaintenance(completedMaintenance.id);
     const recipients = [...new Set(emailList(data.report_emails))];
-    const transport = mailTransport();
     if (!recipients.length) {
       emailNotification.message = 'O local não possui e-mails cadastrados.';
-    } else if (!transport) {
+    } else if (!smtpConfigured()) {
       emailNotification.message = 'O serviço foi finalizado, mas o envio de e-mail não está configurado no Render.';
     } else {
       const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
-      await transport.sendMail({
+      const delivery = await sendSmtpMail({
         from: sender,
         to: sender,
         bcc: recipients,
@@ -465,6 +504,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
         text: buildMaintenanceText(data).replace(/\*/g, ''),
         html: maintenanceEmailHtml(data)
       });
+      console.log(`Notificação de manutenção enviada por IPv4 (${delivery.ipv4Host}) para ${recipients.length} destinatário(s) do local ${data.location_name}.`);
       emailNotification.sent = true;
       emailNotification.recipient_count = recipients.length;
       emailNotification.message = 'Notificação enviada para os e-mails cadastrados no local.';
@@ -505,8 +545,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   if (!p.rows[0]) return res.sendStatus(404);
   if (!canAccessLocation(req, p.rows[0].location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
   const rows = (await pool.query(`SELECT * FROM maintenances WHERE pool_id=$1 AND status='COMPLETED' ORDER BY started_at DESC LIMIT 60`, [req.body.pool_id])).rows;
-  const transport = mailTransport();
-  if (!transport) return res.status(503).json({ error: 'Configure o SMTP no Render para enviar relatórios.' });
+  if (!smtpConfigured()) return res.status(503).json({ error: 'Configure o SMTP no Render para enviar relatórios.' });
   const doc = new PDFDocument({ size: 'A4', margin: 42 });
   const chunks = [];
   doc.on('data', c => chunks.push(c));
@@ -518,7 +557,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   const pdf = await pdfDone;
   const recipients = emailList(req.body.emails?.length ? req.body.emails : p.rows[0].report_emails);
   if (!recipients.length) return res.status(400).json({ error: 'O local não possui e-mails cadastrados.' });
-  await transport.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipients.join(','), subject: `AquaGuard - Evolução Química - ${p.rows[0].name}`, text: `Segue o relatório de evolução química da ${p.rows[0].name}.`, attachments: [{ filename: 'evolucao-quimica.pdf', content: pdf }] });
+  await sendSmtpMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipients.join(','), subject: `AquaGuard - Evolução Química - ${p.rows[0].name}`, text: `Segue o relatório de evolução química da ${p.rows[0].name}.`, attachments: [{ filename: 'evolucao-quimica.pdf', content: pdf }] });
   res.json({ ok: true, recipients });
 }));
 

@@ -111,6 +111,8 @@ Para Gmail, ative a verificação em duas etapas e crie uma senha de aplicativo.
 
 Ao clicar em **Finalizar Serviço**, o sistema identifica o local por meio da piscina da manutenção e envia a notificação somente para os e-mails cadastrados nesse local. Os destinatários são enviados em cópia oculta para que um endereço não seja exibido aos demais. Se o SMTP estiver indisponível, a manutenção permanece finalizada e o sistema informa que o e-mail não pôde ser enviado.
 
+O envio resolve o servidor SMTP exclusivamente por IPv4. Isso evita falhas `ENETUNREACH` em hospedagens que recebem um endereço IPv6 do Gmail, mas não possuem rota IPv6 de saída.
+
 ## Desenvolvimento local
 
 ```bash
