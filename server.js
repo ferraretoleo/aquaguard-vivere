@@ -155,8 +155,21 @@ function mailTransport() {
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 465),
     secure: String(process.env.SMTP_SECURE || 'true') === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD }
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000
   });
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+}
+
+function maintenanceEmailHtml(data) {
+  const dt = value => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(value)) : '-';
+  const services = (data.services || []).map(service => `<li style="margin:0 0 6px">${escapeHtml(service)}</li>`).join('') || '<li>Nenhum serviço informado</li>';
+  return `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f7fb;font-family:Arial,sans-serif;color:#172033"><div style="max-width:680px;margin:0 auto;padding:24px"><div style="background:#0f766e;color:white;border-radius:14px 14px 0 0;padding:22px 26px"><div style="font-size:13px;opacity:.85">AquaGuard</div><h1 style="font-size:22px;margin:5px 0 0">Manutenção realizada</h1></div><div style="background:white;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 14px 14px;padding:26px"><p style="margin-top:0">A manutenção da piscina foi concluída com sucesso.</p><table style="width:100%;border-collapse:collapse;margin:18px 0"><tr><td style="padding:9px;background:#f8fafc"><strong>Local</strong><br>${escapeHtml(data.location_name)}</td><td style="padding:9px;background:#f8fafc"><strong>Piscina</strong><br>${escapeHtml(data.pool_name)}</td></tr><tr><td style="padding:9px"><strong>Executante</strong><br>${escapeHtml(data.executor)}</td><td style="padding:9px"><strong>Período</strong><br>${escapeHtml(dt(data.started_at))} a ${escapeHtml(dt(data.ended_at))}</td></tr></table><h2 style="font-size:17px;color:#0f766e">Medições químicas</h2><table style="width:100%;border-collapse:collapse;text-align:center"><tr><td style="padding:10px;border:1px solid #e5e7eb"><strong>pH</strong><br>${escapeHtml(data.ph ?? '-')}</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Cloro livre</strong><br>${escapeHtml(data.chlorine ?? '-')} ppm</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Alcalinidade</strong><br>${escapeHtml(data.alkalinity ?? '-')} ppm</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Estabilizador</strong><br>${escapeHtml(data.stabilizer ?? '-')} ppm</td></tr></table><h2 style="font-size:17px;color:#0f766e;margin-top:24px">Serviços executados</h2><ul style="padding-left:20px">${services}</ul>${data.notes ? `<h2 style="font-size:17px;color:#0f766e;margin-top:24px">Observações</h2><p>${escapeHtml(data.notes)}</p>` : ''}<p style="font-size:12px;color:#64748b;margin:28px 0 0">Mensagem enviada automaticamente pelo AquaGuard.</p></div></div></body></html>`;
 }
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -414,9 +427,10 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     return res.status(400).json({ error: 'Informe todas as medições químicas, incluindo o estabilizador em ppm.' });
   }
   const services = JSON.parse(req.body.services || '[]');
-  const target = (await pool.query(`SELECT p.location_id FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
-  if (!target || !canAccessLocation(req, target.location_id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
+  const target = (await pool.query(`SELECT p.location_id,m.created_by FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
+  if (!target || !canAccessLocation(req, target.location_id) || (req.user.role !== 'ADMIN' && target.created_by !== req.user.id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
   const client = await pool.connect();
+  let completedMaintenance;
   try {
     await client.query('BEGIN');
     const result = await client.query(
@@ -429,8 +443,37 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     }
     for (const file of req.files || []) await client.query(`INSERT INTO maintenance_photos(maintenance_id,phase,file_name,mime_type,file_data) VALUES($1,'END',$2,$3,$4)`, [req.params.id, file.originalname, file.mimetype, file.buffer]);
     await client.query('COMMIT');
-    res.json(result.rows[0]);
+    completedMaintenance = result.rows[0];
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+
+  const emailNotification = { sent: false, recipient_count: 0, message: '' };
+  try {
+    const data = await getMaintenance(completedMaintenance.id);
+    const recipients = [...new Set(emailList(data.report_emails))];
+    const transport = mailTransport();
+    if (!recipients.length) {
+      emailNotification.message = 'O local não possui e-mails cadastrados.';
+    } else if (!transport) {
+      emailNotification.message = 'O serviço foi finalizado, mas o envio de e-mail não está configurado no Render.';
+    } else {
+      const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
+      await transport.sendMail({
+        from: sender,
+        to: sender,
+        bcc: recipients,
+        subject: `AquaGuard - Manutenção realizada - ${data.pool_name} - ${data.location_name}`,
+        text: buildMaintenanceText(data).replace(/\*/g, ''),
+        html: maintenanceEmailHtml(data)
+      });
+      emailNotification.sent = true;
+      emailNotification.recipient_count = recipients.length;
+      emailNotification.message = 'Notificação enviada para os e-mails cadastrados no local.';
+    }
+  } catch (error) {
+    console.error('Falha ao enviar notificação de manutenção:', error.message);
+    emailNotification.message = 'O serviço foi finalizado, mas não foi possível enviar a notificação por e-mail.';
+  }
+  res.json({ ...completedMaintenance, email_notification: emailNotification });
 }));
 
 app.get('/api/maintenances/:id', asyncRoute(async (req, res) => {
