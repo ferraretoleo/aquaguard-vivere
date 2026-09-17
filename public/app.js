@@ -1,4 +1,4 @@
-const state = { user:null, locations:[], pools:[], locationId:null, dashboard:null };
+const state = { user:null, locations:[], pools:[], locationId:null, dashboard:null, activeService:null };
 const $ = (s, root=document) => root.querySelector(s);
 const $$ = (s, root=document) => [...root.querySelectorAll(s)];
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -46,6 +46,23 @@ async function loadBase() {
   select.innerHTML = `${state.user.role==='ADMIN'?'<option value="">Todos os locais</option>':''}${state.locations.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}`;
   select.value = state.locationId || '';
   state.pools = await api(`/api/pools${state.locationId?`?location_id=${state.locationId}`:''}`);
+  await refreshActiveService();
+}
+
+function updateActiveServiceAlert(active) {
+  state.activeService=active;
+  const alert=$('#activeServiceAlert');
+  if(!alert)return;
+  if(!active){alert.classList.add('hidden');alert.innerHTML='';alert.onclick=null;return;}
+  alert.innerHTML=`<span class="active-service-pulse"></span><span><strong>Serviço em andamento</strong><small>${esc(active.pool_name)} · ${esc(active.location_name)}</small><small>Iniciado ${brDate(active.started_at)}</small></span>`;
+  alert.classList.remove('hidden');
+  alert.onclick=()=>go('/startservice');
+}
+
+async function refreshActiveService(){
+  const active=await api('/api/maintenances/active');
+  updateActiveServiceAlert(active);
+  return active;
 }
 
 async function showApp() {
@@ -122,7 +139,7 @@ async function openMaintenance(id) {
     const m=await api(`/api/maintenances/${id}`);
     const cya=stabilizerStatus(m.stabilizer);
     openModal('Detalhes da Manutenção',`<div class="detail-grid"><div class="detail"><span>Piscina</span><strong>${esc(m.pool_name)} - ${esc(m.location_name)}</strong></div><div class="detail"><span>Executante</span><strong>${esc(m.executor)}</strong></div><div class="detail"><span>Data/Hora Início</span><strong>${brDate(m.started_at)}</strong></div><div class="detail"><span>Data/Hora Término</span><strong>${brDate(m.ended_at)}</strong></div></div>
-      <h3>Medições Químicas</h3><div class="measurements"><div class="measure"><span>pH</span><strong>${esc(m.ph)}</strong><small>${isIdeal('ph',m.ph)?'✓ Ideal':'⚠ Verificar'}</small></div><div class="measure"><span>Cloro Livre</span><strong>${esc(m.chlorine)}</strong><small>${isIdeal('chlorine',m.chlorine)?'✓ Ideal':'⚠ Verificar'}</small></div><div class="measure"><span>Alcalinidade</span><strong>${esc(m.alkalinity)}</strong><small>${isIdeal('alk',m.alkalinity)?'✓ Ideal':'⚠ Verificar'}</small></div><div class="measure"><span>Estabilizador (CYA)</span><strong>${esc(m.stabilizer??'-')} ppm</strong><small>${esc(cya.label)}</small></div></div>
+      <h3>Medições Químicas</h3><div class="measurements"><div class="measure"><span>pH</span><strong>${esc(m.ph)}</strong><small>${isIdeal('ph',m.ph)?'✓ Ideal':'⚠ Verificar'} · Ref. 7,2 a 7,6</small></div><div class="measure"><span>Cloro Livre</span><strong>${esc(m.chlorine)}</strong><small>${isIdeal('chlorine',m.chlorine)?'✓ Ideal':'⚠ Verificar'} · Ref. 1 a 3 ppm</small></div><div class="measure"><span>Alcalinidade</span><strong>${esc(m.alkalinity)}</strong><small>${isIdeal('alk',m.alkalinity)?'✓ Ideal':'⚠ Verificar'} · Ref. 80 a 120 ppm</small></div><div class="measure"><span>Estabilizador (CYA)</span><strong>${esc(m.stabilizer??'-')} ppm</strong><small>${esc(cya.label)} · Ref. 30 a 50 ppm</small></div></div>
       <div class="info"><strong>${esc(cya.label)}</strong><br>${esc(cya.meaning)}<br><strong>O que fazer:</strong> ${esc(cya.action)}</div>
       <h3>Serviços Executados</h3><div class="chips">${(m.services||[]).map(s=>`<span class="chip good">✓ ${esc(s)}</span>`).join('')||'-'}</div>${m.notes?`<h3>Observações</h3><p>${esc(m.notes)}</p>`:''}
       <div class="form-actions"><a class="btn outline" href="/api/maintenances/${m.id}/report.pdf">Gerar Relatório</a><button id="copyWhats" class="btn primary">Copiar para WhatsApp</button></div>`);
@@ -131,7 +148,8 @@ async function openMaintenance(id) {
 }
 
 async function renderService() {
-  const active=await api(`/api/maintenances/active${state.locationId?`?location_id=${state.locationId}`:''}`);
+  const active=await api('/api/maintenances/active');
+  updateActiveServiceAlert(active);
   const now=brDate(new Date());
   $('#mainContent').innerHTML=`<div class="page"><button class="btn outline back-button" data-go="/dashboard">← Voltar</button><div class="page-head"><div><h1>${active?'Finalizar Serviço':'Iniciar Serviço'}</h1><p>${now}</p></div></div>
     <form id="serviceForm" class="form-card" enctype="multipart/form-data">${active?completeServiceForm(active):startServiceForm()}</form></div>`;
@@ -141,10 +159,10 @@ async function renderService() {
 
 function startServiceForm(){return `<div class="form-section"><h3>Informações Básicas</h3><div class="form-grid"><div class="field"><span>Piscina *</span><select name="pool_id" required><option value="">Selecione a piscina</option>${state.pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div class="field"><span>Nome do Executante *</span><input name="executor" placeholder="Digite seu nome" required></div></div></div><div class="form-section"><h3>Fotos do Início (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple><small>Até 5 fotos, com no máximo 6 MB cada.</small></div></div><div class="info">Após iniciar o serviço, você poderá retornar ao app para registrar o fechamento com as medições e serviços executados.</div><div class="form-actions"><button class="btn primary" type="submit">Iniciar Serviço</button></div>`;}
 
-function completeServiceForm(m){return `<div class="info">Serviço iniciado em ${brDate(m.started_at)} por ${esc(m.executor)} na ${esc(m.pool_name)}.</div><div class="form-section"><h3>Medições Químicas</h3><div class="form-grid"><div class="field"><span>pH *</span><input name="ph" type="number" min="0" max="14" step="0.1" required></div><div class="field"><span>Cloro Livre (ppm) *</span><input name="chlorine" type="number" min="0" step="0.1" required></div><div class="field"><span>Alcalinidade (ppm) *</span><input name="alkalinity" type="number" min="0" step="1" required></div><div class="field"><span>Estabilizador / Ácido Cianúrico (ppm) *</span><input name="stabilizer" type="number" min="0" step="1" required></div></div><div class="info" style="margin-top:16px">Faixa ideal: 30 a 50 ppm. Para piscinas com gerador de cloro por sal, 60 a 80 ppm é aceitável.</div></div><div class="form-section"><h3>Serviços Executados</h3><div class="checkboxes">${['Limpeza Superficial','Aspiração','Limpeza de Borda','Retrolavagem do Filtro','Tratamento Químico','Verificação dos Equipamentos'].map(s=>`<label class="check"><input type="checkbox" name="services" value="${s}">${s}</label>`).join('')}</div></div><div class="form-section"><div class="field"><span>Observações</span><textarea name="notes" placeholder="Informe ocorrências, produtos aplicados ou recomendações"></textarea></div></div><div class="form-section"><h3>Fotos do Término (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple></div></div><div class="form-actions"><button class="btn primary" type="submit">Finalizar Serviço</button></div>`;}
+function completeServiceForm(m){return `<div class="info">Serviço iniciado em ${brDate(m.started_at)} por ${esc(m.executor)} na ${esc(m.pool_name)}.</div><div class="form-section"><h3>Medições Químicas</h3><div class="form-grid"><div class="field"><span>pH *</span><input name="ph" type="number" min="0" max="14" step="0.1" required><small class="chemical-reference">Referência ideal: 7,2 a 7,6</small></div><div class="field"><span>Cloro Livre (ppm) *</span><input name="chlorine" type="number" min="0" step="0.1" required><small class="chemical-reference">Referência ideal: 1 a 3 ppm</small></div><div class="field"><span>Alcalinidade (ppm) *</span><input name="alkalinity" type="number" min="0" step="1" required><small class="chemical-reference">Referência ideal: 80 a 120 ppm</small></div><div class="field"><span>Estabilizador / Ácido Cianúrico (ppm) *</span><input name="stabilizer" type="number" min="0" step="1" required><small class="chemical-reference">Ideal: 30 a 50 ppm · Piscina de sal: 60 a 80 ppm</small></div></div></div><div class="form-section"><h3>Serviços Executados</h3><div class="checkboxes">${['Limpeza Superficial','Aspiração','Limpeza de Borda','Retrolavagem do Filtro','Tratamento Químico','Verificação dos Equipamentos'].map(s=>`<label class="check"><input type="checkbox" name="services" value="${s}">${s}</label>`).join('')}</div></div><div class="form-section"><div class="field"><span>Observações</span><textarea name="notes" placeholder="Informe ocorrências, produtos aplicados ou recomendações"></textarea></div></div><div class="form-section"><h3>Fotos do Término (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple></div></div><div class="form-actions"><button class="btn primary" type="submit">Finalizar Serviço</button></div>`;}
 
-async function startService(e){e.preventDefault();const form=e.currentTarget,btn=form.querySelector('button[type=submit]');try{btn.disabled=true;await api('/api/maintenances/start',{method:'POST',body:new FormData(form)});toast('Serviço iniciado.');renderService();}catch(err){toast(err.message,true);}finally{btn.disabled=false;}}
-async function completeService(e,id){e.preventDefault();const form=e.currentTarget,fd=new FormData(form),btn=form.querySelector('button[type=submit]');fd.set('services',JSON.stringify($$('input[name=services]:checked',form).map(i=>i.value)));try{btn.disabled=true;await api(`/api/maintenances/${id}/complete`,{method:'POST',body:fd});toast('Serviço finalizado com sucesso.');go('/dashboard');}catch(err){toast(err.message,true);}finally{btn.disabled=false;}}
+async function startService(e){e.preventDefault();const form=e.currentTarget,btn=form.querySelector('button[type=submit]');try{btn.disabled=true;await api('/api/maintenances/start',{method:'POST',body:new FormData(form)});await refreshActiveService();toast('Serviço iniciado.');renderService();}catch(err){toast(err.message,true);}finally{btn.disabled=false;}}
+async function completeService(e,id){e.preventDefault();const form=e.currentTarget,fd=new FormData(form),btn=form.querySelector('button[type=submit]');fd.set('services',JSON.stringify($$('input[name=services]:checked',form).map(i=>i.value)));try{btn.disabled=true;await api(`/api/maintenances/${id}/complete`,{method:'POST',body:fd});await refreshActiveService();toast('Serviço finalizado com sucesso.');go('/dashboard');}catch(err){toast(err.message,true);}finally{btn.disabled=false;}}
 
 async function renderPools(){ state.pools=await api(`/api/pools${state.locationId?`?location_id=${state.locationId}`:''}`);$('#mainContent').innerHTML=`<div class="page"><button class="btn outline back-button" data-go="/dashboard">← Voltar</button><div class="page-head"><div><h1>Gerenciar Piscinas</h1><p>Cadastre e gerencie as piscinas do condomínio</p></div>${state.user.role==='ADMIN'?'<button id="newPool" class="btn primary">＋ Nova Piscina</button>':''}</div><div class="cards-list">${state.pools.map(poolCard).join('')||'<div class="panel empty">Nenhuma piscina cadastrada.</div>'}</div></div>`;bindRoutes();if($('#newPool'))$('#newPool').onclick=()=>poolModal();$$('[data-edit-pool]').forEach(b=>b.onclick=()=>poolModal(state.pools.find(p=>p.id===b.dataset.editPool)));$$('[data-disable-pool]').forEach(b=>b.onclick=()=>disablePool(b.dataset.disablePool));}
 function poolCard(p){return `<article class="item-card"><div class="item-main"><h3>${esc(p.name)} - ${esc(p.location_name)}</h3><div class="item-meta"><span class="badge ${p.is_active?'':'off'}">${p.is_active?'Ativa':'Inativa'}</span><span>${esc(p.pool_location||'Local não informado')}</span><span>${liters(p.volume_liters)}</span></div></div>${state.user.role==='ADMIN'?`<div class="actions"><button class="btn outline" data-edit-pool="${p.id}">Editar</button><button class="btn danger" data-disable-pool="${p.id}">Desativar</button></div>`:''}</article>`;}
@@ -167,6 +185,8 @@ document.addEventListener('DOMContentLoaded',async()=>{
   $('#logoutButton').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});showLogin();};
   $('#loginForm').onsubmit=async e=>{e.preventDefault();const b=e.currentTarget.querySelector('button');try{b.disabled=true;const v=Object.fromEntries(new FormData(e.currentTarget));const r=await api('/api/auth/login',{method:'POST',body:JSON.stringify(v)});state.user=r.user;const next=new URLSearchParams(location.search).get('from');if(next==='/usuarios'){location.href='/usuarios';return;}history.replaceState({},'', '/dashboard');await showApp();}catch(err){toast(err.message,true);}finally{b.disabled=false;}};
   addEventListener('popstate',()=>state.user?renderRoute():showLogin());
+  addEventListener('visibilitychange',()=>{if(!document.hidden&&state.user)refreshActiveService().catch(()=>{});});
+  setInterval(()=>{if(state.user)refreshActiveService().catch(()=>{});},30000);
   try{const config=await api('/api/config');if(config.googleEnabled){$('#googleLogin').classList.remove('hidden');$('#loginDivider').classList.remove('hidden');}}catch{}
   try{const me=await api('/api/me');state.user=me.user;if(location.pathname==='/login')history.replaceState({},'', '/dashboard');await showApp();}catch{showLogin();}
 });

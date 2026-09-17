@@ -18,6 +18,7 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Evolução de pH, cloro, alcalinidade e estabilizador de cloro (ácido cianúrico/CYA)
 - Histórico completo e detalhes de cada manutenção
 - Início e fechamento do serviço em momentos diferentes
+- Aviso permanente no canto inferior esquerdo enquanto o usuário possui um serviço em andamento
 - Fotos no início e no fim do serviço
 - Cadastro de locais e piscinas
 - Relatório PDF e texto pronto para WhatsApp
@@ -35,6 +36,8 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 6. Após a publicação, acesse a URL do Render e entre com `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
 
 O sistema cria as tabelas, o local Vivere Palhano e as piscinas Adulto e Infantil na primeira inicialização.
+
+Cada usuário vê somente o próprio serviço em andamento e os dados do local ao qual tem acesso. A troca de tela ou do filtro de local não apaga nem mistura esse acompanhamento. Enquanto houver um serviço aberto, o sistema impede que o mesmo usuário inicie outro.
 
 ## Nova medição: estabilizador de cloro
 

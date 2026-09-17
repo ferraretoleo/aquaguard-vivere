@@ -350,12 +350,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/maintenances/active', asyncRoute(async (req, res) => {
-  const args = [req.user.id];
-  let extra = '';
-  const locationId = requestedLocation(req, req.query.location_id);
-  if (locationId) { args.push(locationId); extra = `AND p.location_id=$2`; }
   const result = await pool.query(
-    `SELECT m.*,p.name AS pool_name,p.location_id,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE m.status='STARTED' AND m.created_by=$1 ${extra} ORDER BY m.started_at DESC LIMIT 1`, args
+    `SELECT m.*,p.name AS pool_name,p.location_id,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE m.status='STARTED' AND m.created_by=$1 ORDER BY m.started_at DESC LIMIT 1`, [req.user.id]
   );
   res.json(result.rows[0] || null);
 }));
@@ -364,6 +360,8 @@ app.post('/api/maintenances/start', upload.array('photos', 5), asyncRoute(async 
   if (!validUuid(req.body.pool_id) || !String(req.body.executor || '').trim()) return res.status(400).json({ error: 'Informe a piscina e o executante.' });
   const selectedPool = (await pool.query(`SELECT location_id FROM pools WHERE id=$1 AND is_active=true`, [req.body.pool_id])).rows[0];
   if (!selectedPool || !canAccessLocation(req, selectedPool.location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
+  const active = (await pool.query(`SELECT m.id,p.name AS pool_name FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.status='STARTED' AND m.created_by=$1 ORDER BY m.started_at DESC LIMIT 1`, [req.user.id])).rows[0];
+  if (active) return res.status(409).json({ error: `Você já possui um serviço em andamento na ${active.pool_name}. Finalize-o antes de iniciar outro.` });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
