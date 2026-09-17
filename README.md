@@ -100,7 +100,19 @@ Depois configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` e `APP_URL` no Rende
 
 ## Envio de e-mails
 
-Para Gmail, ative a verificação em duas etapas e crie uma senha de aplicativo. Preencha:
+### Render gratuito: Brevo API (recomendado)
+
+O Render gratuito bloqueia conexões SMTP nas portas 25, 465 e 587. Para enviar pela conexão HTTPS liberada no Render, crie uma conta na Brevo, valide o e-mail remetente e gere uma chave de API. No Render, preencha:
+
+- `BREVO_API_KEY`
+- `BREVO_SENDER_EMAIL` com o mesmo remetente validado na Brevo
+- `BREVO_SENDER_NAME=AquaGuard`
+
+A aplicação usa a Brevo como primeira opção. Os destinatários do Local são enviados em cópia oculta, mantendo um endereço invisível para os demais. A manutenção permanece finalizada mesmo se o provedor de e-mail estiver temporariamente indisponível.
+
+### SMTP alternativo
+
+Em uma hospedagem que permita SMTP, ou em um plano do Render sem esse bloqueio, o Gmail continua disponível como alternativa. Ative a verificação em duas etapas, crie uma senha de aplicativo e preencha:
 
 - `SMTP_HOST=smtp.gmail.com`
 - `SMTP_PORT=465`
@@ -109,7 +121,7 @@ Para Gmail, ative a verificação em duas etapas e crie uma senha de aplicativo.
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
 
-Ao clicar em **Finalizar Serviço**, o sistema identifica o local por meio da piscina da manutenção e envia a notificação somente para os e-mails cadastrados nesse local. Os destinatários são enviados em cópia oculta para que um endereço não seja exibido aos demais. Se o SMTP estiver indisponível, a manutenção permanece finalizada e o sistema informa que o e-mail não pôde ser enviado.
+Ao clicar em **Finalizar Serviço**, o sistema identifica o local por meio da piscina da manutenção e envia a notificação somente para os e-mails cadastrados nesse local.
 
 O envio resolve o servidor SMTP exclusivamente por IPv4. Isso evita falhas `ENETUNREACH` em hospedagens que recebem um endereço IPv6 do Gmail, mas não possuem rota IPv6 de saída.
 

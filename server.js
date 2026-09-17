@@ -155,6 +155,14 @@ function smtpConfigured() {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
 }
 
+function brevoConfigured() {
+  return Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
+}
+
+function emailConfigured() {
+  return brevoConfigured() || smtpConfigured();
+}
+
 function mailTransport(connectionHost = process.env.SMTP_HOST) {
   if (!smtpConfigured()) return null;
   const configuredHost = String(process.env.SMTP_HOST);
@@ -200,6 +208,57 @@ async function sendSmtpMail(message) {
     }
   }
   throw lastError;
+}
+
+async function sendBrevoMail({ recipients, subject, text, html, attachments = [] }) {
+  if (!brevoConfigured()) {
+    const error = new Error('API da Brevo não configurada.');
+    error.code = 'EBREVO_CONFIG';
+    throw error;
+  }
+  const senderEmail = String(process.env.BREVO_SENDER_EMAIL).trim();
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'api-key': process.env.BREVO_API_KEY
+    },
+    body: JSON.stringify({
+      sender: { name: process.env.BREVO_SENDER_NAME || 'AquaGuard', email: senderEmail },
+      to: [{ email: senderEmail }],
+      bcc: recipients.map(email => ({ email })),
+      subject,
+      textContent: text,
+      htmlContent: html || undefined,
+      attachment: attachments.map(item => ({
+        name: item.filename,
+        content: Buffer.isBuffer(item.content) ? item.content.toString('base64') : String(item.content)
+      }))
+    }),
+    signal: AbortSignal.timeout(20000)
+  });
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 500);
+    const error = new Error(`Brevo respondeu ${response.status}: ${detail}`);
+    error.code = 'EBREVO_API';
+    throw error;
+  }
+  return { provider: 'Brevo API', info: await response.json() };
+}
+
+async function sendAppEmail({ recipients, subject, text, html, attachments = [] }) {
+  const uniqueRecipients = [...new Set(emailList(recipients))];
+  if (!uniqueRecipients.length) throw new Error('Nenhum destinatário informado.');
+  if (brevoConfigured()) return sendBrevoMail({ recipients: uniqueRecipients, subject, text, html, attachments });
+  if (smtpConfigured()) {
+    const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
+    const result = await sendSmtpMail({ from: sender, to: sender, bcc: uniqueRecipients, subject, text, html, attachments });
+    return { provider: `SMTP IPv4 (${result.ipv4Host})`, info: result.info };
+  }
+  const error = new Error('Nenhum provedor de e-mail configurado.');
+  error.code = 'EMAIL_CONFIG';
+  throw error;
 }
 
 function escapeHtml(value) {
@@ -492,19 +551,16 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     const recipients = [...new Set(emailList(data.report_emails))];
     if (!recipients.length) {
       emailNotification.message = 'O local não possui e-mails cadastrados.';
-    } else if (!smtpConfigured()) {
+    } else if (!emailConfigured()) {
       emailNotification.message = 'O serviço foi finalizado, mas o envio de e-mail não está configurado no Render.';
     } else {
-      const sender = process.env.SMTP_FROM || process.env.SMTP_USER;
-      const delivery = await sendSmtpMail({
-        from: sender,
-        to: sender,
-        bcc: recipients,
+      const delivery = await sendAppEmail({
+        recipients,
         subject: `AquaGuard - Manutenção realizada - ${data.pool_name} - ${data.location_name}`,
         text: buildMaintenanceText(data).replace(/\*/g, ''),
         html: maintenanceEmailHtml(data)
       });
-      console.log(`Notificação de manutenção enviada por IPv4 (${delivery.ipv4Host}) para ${recipients.length} destinatário(s) do local ${data.location_name}.`);
+      console.log(`Notificação de manutenção enviada por ${delivery.provider} para ${recipients.length} destinatário(s) do local ${data.location_name}.`);
       emailNotification.sent = true;
       emailNotification.recipient_count = recipients.length;
       emailNotification.message = 'Notificação enviada para os e-mails cadastrados no local.';
@@ -545,7 +601,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   if (!p.rows[0]) return res.sendStatus(404);
   if (!canAccessLocation(req, p.rows[0].location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
   const rows = (await pool.query(`SELECT * FROM maintenances WHERE pool_id=$1 AND status='COMPLETED' ORDER BY started_at DESC LIMIT 60`, [req.body.pool_id])).rows;
-  if (!smtpConfigured()) return res.status(503).json({ error: 'Configure o SMTP no Render para enviar relatórios.' });
+  if (!emailConfigured()) return res.status(503).json({ error: 'Configure a API da Brevo ou o SMTP no Render para enviar relatórios.' });
   const doc = new PDFDocument({ size: 'A4', margin: 42 });
   const chunks = [];
   doc.on('data', c => chunks.push(c));
@@ -557,7 +613,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   const pdf = await pdfDone;
   const recipients = emailList(req.body.emails?.length ? req.body.emails : p.rows[0].report_emails);
   if (!recipients.length) return res.status(400).json({ error: 'O local não possui e-mails cadastrados.' });
-  await sendSmtpMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipients.join(','), subject: `AquaGuard - Evolução Química - ${p.rows[0].name}`, text: `Segue o relatório de evolução química da ${p.rows[0].name}.`, attachments: [{ filename: 'evolucao-quimica.pdf', content: pdf }] });
+  await sendAppEmail({ recipients, subject: `AquaGuard - Evolução Química - ${p.rows[0].name}`, text: `Segue o relatório de evolução química da ${p.rows[0].name}.`, attachments: [{ filename: 'evolucao-quimica.pdf', content: pdf }] });
   res.json({ ok: true, recipients });
 }));
 
