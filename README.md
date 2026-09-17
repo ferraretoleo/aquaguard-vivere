@@ -24,7 +24,6 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Relatório PDF e texto pronto para WhatsApp
 - Geração de imagem dos detalhes da manutenção para copiar, compartilhar ou baixar no WhatsApp
 - Envio do relatório de evolução química por e-mail
-- Notificação automática por e-mail ao finalizar uma manutenção, usando somente os contatos cadastrados no local da piscina
 - Layout responsivo para celular
 - Página avulsa de usuários em `/usuarios`, visível somente para administradores
 - Menu de relatórios com filtros por local, piscina e período, respeitando o acesso de cada usuário
@@ -121,7 +120,7 @@ Em uma hospedagem que permita SMTP, ou em um plano do Render sem esse bloqueio, 
 - `SMTP_PASSWORD`
 - `SMTP_FROM`
 
-Ao clicar em **Finalizar Serviço**, o sistema identifica o local por meio da piscina da manutenção e envia a notificação somente para os e-mails cadastrados nesse local.
+Ao clicar em **Finalizar Serviço**, a manutenção é encerrada e salva imediatamente, sem tentativa de envio de e-mail. O envio de relatório por e-mail continua disponível apenas na área de relatórios, quando solicitado manualmente.
 
 O envio resolve o servidor SMTP exclusivamente por IPv4. Isso evita falhas `ENETUNREACH` em hospedagens que recebem um endereço IPv6 do Gmail, mas não possuem rota IPv6 de saída.
 

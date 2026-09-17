@@ -545,31 +545,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     completedMaintenance = result.rows[0];
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 
-  const emailNotification = { sent: false, recipient_count: 0, message: '' };
-  try {
-    const data = await getMaintenance(completedMaintenance.id);
-    const recipients = [...new Set(emailList(data.report_emails))];
-    if (!recipients.length) {
-      emailNotification.message = 'O local não possui e-mails cadastrados.';
-    } else if (!emailConfigured()) {
-      emailNotification.message = 'O serviço foi finalizado, mas o envio de e-mail não está configurado no Render.';
-    } else {
-      const delivery = await sendAppEmail({
-        recipients,
-        subject: `AquaGuard - Manutenção realizada - ${data.pool_name} - ${data.location_name}`,
-        text: buildMaintenanceText(data).replace(/\*/g, ''),
-        html: maintenanceEmailHtml(data)
-      });
-      console.log(`Notificação de manutenção enviada por ${delivery.provider} para ${recipients.length} destinatário(s) do local ${data.location_name}.`);
-      emailNotification.sent = true;
-      emailNotification.recipient_count = recipients.length;
-      emailNotification.message = 'Notificação enviada para os e-mails cadastrados no local.';
-    }
-  } catch (error) {
-    console.error('Falha ao enviar notificação de manutenção:', error.message);
-    emailNotification.message = 'O serviço foi finalizado, mas não foi possível enviar a notificação por e-mail.';
-  }
-  res.json({ ...completedMaintenance, email_notification: emailNotification });
+  res.json(completedMaintenance);
 }));
 
 app.get('/api/maintenances/:id', asyncRoute(async (req, res) => {
