@@ -26,6 +26,7 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Envio do relatório de evolução química por e-mail
 - Layout responsivo para celular
 - Página avulsa de usuários em `/usuarios`, visível somente para administradores
+- Menu de relatórios com filtros por local, piscina e período, respeitando o acesso de cada usuário
 
 ## Publicação rápida
 

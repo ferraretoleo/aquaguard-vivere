@@ -350,6 +350,41 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   res.json({ stats: { activePools: activePools.rows[0].count, today: today.rows[0].count, total: total.rows[0].count }, history: history.rows, trends: trends.rows });
 }));
 
+app.get('/api/reports/maintenances', asyncRoute(async (req, res) => {
+  const locationId = requestedLocation(req, req.query.location_id);
+  const poolId = req.query.pool_id ? String(req.query.pool_id) : null;
+  const dateFrom = req.query.date_from ? String(req.query.date_from) : null;
+  const dateTo = req.query.date_to ? String(req.query.date_to) : null;
+  if (poolId && !validUuid(poolId)) return res.status(400).json({ error: 'Piscina inválida.' });
+  if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) return res.status(400).json({ error: 'Data inicial inválida.' });
+  if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) return res.status(400).json({ error: 'Data final inválida.' });
+  if (dateFrom && dateTo && dateFrom > dateTo) return res.status(400).json({ error: 'A data inicial não pode ser maior que a data final.' });
+  const params = [];
+  const conditions = [`m.status='COMPLETED'`];
+  if (locationId) { params.push(locationId); conditions.push(`p.location_id=$${params.length}`); }
+  if (poolId) { params.push(poolId); conditions.push(`m.pool_id=$${params.length}`); }
+  if (dateFrom) { params.push(dateFrom); conditions.push(`(m.started_at AT TIME ZONE 'America/Sao_Paulo')::date >= $${params.length}::date`); }
+  if (dateTo) { params.push(dateTo); conditions.push(`(m.started_at AT TIME ZONE 'America/Sao_Paulo')::date <= $${params.length}::date`); }
+  const rows = (await pool.query(
+    `SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.notes,
+            p.id AS pool_id,p.name AS pool_name,l.id AS location_id,l.name AS location_name
+     FROM maintenances m
+     JOIN pools p ON p.id=m.pool_id
+     JOIN locations l ON l.id=p.location_id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY m.started_at DESC
+     LIMIT 1000`, params
+  )).rows;
+  res.json({
+    summary: {
+      total: rows.length,
+      pools: new Set(rows.map(row => row.pool_id)).size,
+      services: rows.reduce((total, row) => total + (row.services || []).length, 0)
+    },
+    rows
+  });
+}));
+
 app.get('/api/maintenances/active', asyncRoute(async (req, res) => {
   const result = await pool.query(
     `SELECT m.*,p.name AS pool_name,p.location_id,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE m.status='STARTED' AND m.created_by=$1 ORDER BY m.started_at DESC LIMIT 1`, [req.user.id]

@@ -21,7 +21,7 @@ function toast(message, error=false) {
 
 function currentRoute() {
   const name = location.pathname.replace(/^\/+|\/+$/g,'').toLowerCase();
-  return ['dashboard','startservice','pools','locations'].includes(name) ? name : 'dashboard';
+  return ['dashboard','startservice','pools','locations','reports'].includes(name) ? name : 'dashboard';
 }
 
 function go(path) {
@@ -80,6 +80,7 @@ async function renderRoute() {
     if (route==='startservice') await renderService();
     if (route==='pools') await renderPools();
     if (route==='locations') await renderLocations();
+    if (route==='reports') await renderReports();
   } catch (error) { main.innerHTML=`<div class="page"><div class="empty">${esc(error.message)}</div></div>`; toast(error.message,true); }
 }
 
@@ -230,6 +231,58 @@ async function renderLocations(){state.locations=await api('/api/locations');$('
 function locationCard(l){return `<article class="item-card"><div class="item-main"><h3>${esc(l.name)}</h3><div class="item-meta"><span class="badge ${l.is_active?'':'off'}">${l.is_active?'Ativo':'Inativo'}</span><span>${esc(l.address||'Endereço não informado')}</span></div><div class="item-meta" style="margin-top:8px"><strong>Emails para relatórios:</strong> ${(l.report_emails||[]).map(esc).join(' • ')||'Nenhum'}</div></div>${state.user.role==='ADMIN'?`<div class="actions"><button class="btn outline" data-edit-location="${l.id}">Editar</button><button class="btn danger" data-disable-location="${l.id}">Desativar</button></div>`:''}</article>`;}
 function locationModal(l=null){openModal(l?'Editar Local':'Novo Local',`<form id="locationForm"><div class="form-grid"><div class="field full-row"><span>Nome do Local *</span><input name="name" value="${esc(l?.name||'')}" placeholder="Ex: Vivere Palhano" required></div><div class="field full-row"><span>Endereço</span><input name="address" value="${esc(l?.address||'')}" placeholder="Ex: Rua ABC, 123"></div><div class="field full-row"><span>Emails para Relatórios</span><textarea name="report_emails" placeholder="Um e-mail por linha">${esc((l?.report_emails||[]).join('\n'))}</textarea></div><div class="field"><span>Status</span><select name="is_active"><option value="true" ${l?.is_active!==false?'selected':''}>Ativo</option><option value="false" ${l?.is_active===false?'selected':''}>Inativo</option></select></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">${l?'Salvar':'Criar'}</button></div></form>`);$('#locationForm').onsubmit=async e=>{e.preventDefault();const v=Object.fromEntries(new FormData(e.currentTarget));v.is_active=v.is_active==='true';try{await api(l?`/api/locations/${l.id}`:'/api/locations',{method:l?'PUT':'POST',body:JSON.stringify(v)});closeModal();toast(`Local ${l?'atualizado':'criado'}.`);await loadBase();renderLocations();}catch(err){toast(err.message,true);}};}
 async function disableLocation(id){if(!confirm('Deseja desativar este local? Os dados e o histórico serão preservados.'))return;try{await api(`/api/locations/${id}`,{method:'DELETE'});toast('Local desativado.');await loadBase();renderLocations();}catch(e){toast(e.message,true);}}
+
+function brazilInputDate(value=new Date()){
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(value);
+  const get=type=>parts.find(p=>p.type===type)?.value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function reportPoolOptions(pools,selected=''){
+  return `<option value="">Todas as piscinas</option>${pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.name)}${p.location_name?` · ${esc(p.location_name)}`:''}</option>`).join('')}`;
+}
+
+function reportRows(rows){
+  if(!rows.length)return '<div class="empty">Nenhuma manutenção encontrada para os filtros informados.</div>';
+  return `<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Data</th><th>Local</th><th>Piscina</th><th>Executante</th><th>pH</th><th>Cloro</th><th>Alcalinidade</th><th>Estabilizador</th><th>Serviços</th><th class="no-print"></th></tr></thead><tbody>${rows.map(m=>`<tr><td>${brDate(m.started_at)}</td><td>${esc(m.location_name)}</td><td>${esc(m.pool_name)}</td><td>${esc(m.executor)}</td><td>${esc(m.ph??'-')}</td><td>${esc(m.chlorine??'-')} ppm</td><td>${esc(m.alkalinity??'-')} ppm</td><td>${esc(m.stabilizer??'-')} ppm</td><td>${(m.services||[]).length}</td><td class="no-print"><button class="btn outline report-detail" data-id="${m.id}">Detalhes</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+
+async function loadReportResults(){
+  const form=$('#reportFilters');
+  const values=Object.fromEntries(new FormData(form));
+  const query=new URLSearchParams();
+  if(values.location_id)query.set('location_id',values.location_id);
+  if(values.pool_id)query.set('pool_id',values.pool_id);
+  if(values.date_from)query.set('date_from',values.date_from);
+  if(values.date_to)query.set('date_to',values.date_to);
+  const button=form.querySelector('button[type=submit]');
+  try{
+    button.disabled=true;
+    const report=await api(`/api/reports/maintenances?${query}`);
+    const locationLabel=$('#reportLocation')?.selectedOptions[0]?.textContent||'Todos os locais';
+    const poolLabel=$('#reportPool')?.selectedOptions[0]?.textContent||'Todas as piscinas';
+    const formatDate=value=>value?value.split('-').reverse().join('/'):'Sem limite';
+    $('#reportContext').innerHTML=`<strong>${esc(locationLabel)}</strong><span>${esc(poolLabel)}</span><span>Período: ${formatDate(values.date_from)} a ${formatDate(values.date_to)}</span>`;
+    $('#reportSummary').innerHTML=`<section class="stats report-stats"><div class="stat-card"><span>Manutenções</span><strong>${report.summary.total}</strong></div><div class="stat-card"><span>Piscinas atendidas</span><strong>${report.summary.pools}</strong></div><div class="stat-card"><span>Serviços executados</span><strong>${report.summary.services}</strong></div></section>`;
+    $('#reportResults').innerHTML=reportRows(report.rows);
+    $('#printReport').disabled=!report.rows.length;
+    $$('.report-detail').forEach(b=>b.onclick=()=>openMaintenance(b.dataset.id));
+  }catch(error){toast(error.message,true);$('#reportResults').innerHTML=`<div class="empty">${esc(error.message)}</div>`;}
+  finally{button.disabled=false;}
+}
+
+async function renderReports(){
+  const today=brazilInputDate(),monthStart=`${today.slice(0,8)}01`;
+  const selectedLocation=state.user.role==='ADMIN'?(state.locationId||''):state.user.location_id;
+  const initialPools=await api(`/api/pools${selectedLocation?`?location_id=${selectedLocation}`:''}`);
+  $('#mainContent').innerHTML=`<div class="page report-page"><div class="page-head"><div><h1>Relatórios</h1><p>Consulte as manutenções por local, piscina e período</p></div><button id="printReport" class="btn outline no-print" disabled>🖨 Imprimir</button></div>
+    <form id="reportFilters" class="panel report-filters no-print"><div class="field"><span>Local</span><select name="location_id" id="reportLocation" ${state.user.role==='ADMIN'?'':'disabled'}>${state.user.role==='ADMIN'?`<option value="">Todos os locais</option>${state.locations.map(l=>`<option value="${l.id}" ${l.id===selectedLocation?'selected':''}>${esc(l.name)}</option>`).join('')}`:state.locations.map(l=>`<option value="${l.id}" selected>${esc(l.name)}</option>`).join('')}</select>${state.user.role==='ADMIN'?'':`<input type="hidden" name="location_id" value="${esc(selectedLocation)}">`}</div><div class="field"><span>Piscina</span><select name="pool_id" id="reportPool">${reportPoolOptions(initialPools)}</select></div><div class="field"><span>Data inicial</span><input name="date_from" type="date" value="${monthStart}" required></div><div class="field"><span>Data final</span><input name="date_to" type="date" value="${today}" required></div><button class="btn primary" type="submit">Filtrar relatório</button></form>
+    <div id="reportContext" class="report-context"></div><div id="reportSummary"></div><section id="reportResults" class="panel report-results"><div class="empty">Carregando relatório...</div></section></div>`;
+  $('#reportFilters').onsubmit=e=>{e.preventDefault();loadReportResults();};
+  $('#printReport').onclick=()=>window.print();
+  if(state.user.role==='ADMIN')$('#reportLocation').onchange=async e=>{$('#reportPool').innerHTML=reportPoolOptions(await api(`/api/pools${e.target.value?`?location_id=${e.target.value}`:''}`));};
+  await loadReportResults();
+}
 
 function openModal(title,body){$('#modalRoot').innerHTML=`<div class="modal-backdrop"><section class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-close-modal data-html2canvas-ignore aria-label="Fechar">×</button></div><div class="modal-body">${body}</div></section></div>`;$$('[data-close-modal]').forEach(b=>b.onclick=closeModal);$('.modal-backdrop').onclick=e=>{if(e.target===e.currentTarget)closeModal();};}
 function closeModal(){$('#modalRoot').innerHTML='';}
