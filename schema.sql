@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   email varchar(255) NOT NULL,
   password_hash text,
   google_id varchar(255),
-  role varchar(20) NOT NULL DEFAULT 'USER' CHECK (role IN ('ADMIN','USER')),
+  role varchar(20) NOT NULL DEFAULT 'USER' CHECK (role IN ('ADMIN','LOCAL_ADMIN','USER')),
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -34,6 +34,24 @@ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS ix_users_location ON users(location_id);
+
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users
+  ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN','LOCAL_ADMIN','USER'));
+
+CREATE TABLE IF NOT EXISTS user_locations (
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  location_id uuid NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS ix_user_locations_location ON user_locations(location_id);
+
+INSERT INTO user_locations(user_id, location_id)
+SELECT id, location_id
+FROM users
+WHERE location_id IS NOT NULL
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS pools (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

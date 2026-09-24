@@ -33,8 +33,36 @@ function asyncRoute(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
+const ROLE_ADMIN = 'ADMIN';
+const ROLE_LOCAL_ADMIN = 'LOCAL_ADMIN';
+const ROLE_USER = 'USER';
+
 function publicUser(row) {
-  return { id: row.id, name: row.name, email: row.email, role: row.role, location_id: row.location_id };
+  const locationIds = Array.isArray(row.location_ids)
+    ? row.location_ids.filter(Boolean)
+    : (row.location_id ? [row.location_id] : []);
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    location_id: locationIds[0] || null,
+    location_ids: locationIds
+  };
+}
+
+async function userWithLocations(userId) {
+  const result = await pool.query(
+    `SELECT u.*,
+            COALESCE(array_agg(ul.location_id ORDER BY ul.created_at)
+              FILTER (WHERE ul.location_id IS NOT NULL),'{}'::uuid[]) AS location_ids
+     FROM users u
+     LEFT JOIN user_locations ul ON ul.user_id=u.id
+     WHERE u.id=$1
+     GROUP BY u.id`,
+    [userId]
+  );
+  return result.rows[0] || null;
 }
 
 function signIn(res, user) {
@@ -50,9 +78,9 @@ function signIn(res, user) {
 async function requireAuth(req, res, next) {
   try {
     const decoded = jwt.verify(req.cookies.aquaguard_token || '', JWT_SECRET);
-    const result = await pool.query(`SELECT id,name,email,role,location_id FROM users WHERE id=$1 AND is_active=true`, [decoded.id]);
-    if (!result.rows[0]) return res.status(401).json({ error: 'Usuário inativo ou não encontrado.' });
-    req.user = publicUser(result.rows[0]);
+    const user = await userWithLocations(decoded.id);
+    if (!user?.is_active) return res.status(401).json({ error: 'Usuário inativo ou não encontrado.' });
+    req.user = publicUser(user);
     next();
   } catch {
     res.status(401).json({ error: 'Sessão expirada. Entre novamente.' });
@@ -60,21 +88,74 @@ async function requireAuth(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (req.user?.role !== 'ADMIN') return res.status(403).json({ error: 'Acesso exclusivo para administrador.' });
+  if (req.user?.role !== ROLE_ADMIN) return res.status(403).json({ error: 'Acesso exclusivo para administrador geral.' });
   next();
+}
+
+function requireLocalManager(req, res, next) {
+  if (![ROLE_ADMIN, ROLE_LOCAL_ADMIN].includes(req.user?.role)) {
+    return res.status(403).json({ error: 'Seu perfil não permite alterar este cadastro.' });
+  }
+  next();
+}
+
+function isGlobalAdmin(user) {
+  return user?.role === ROLE_ADMIN;
+}
+
+function canManageLocalData(user) {
+  return [ROLE_ADMIN, ROLE_LOCAL_ADMIN].includes(user?.role);
 }
 
 function validUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
 
-function requestedLocation(req, value) {
-  if (req.user.role !== 'ADMIN') return req.user.location_id;
-  return validUuid(value) ? value : null;
+function canAccessLocation(req, locationId) {
+  return isGlobalAdmin(req.user) || (req.user.location_ids || []).includes(String(locationId));
 }
 
-function canAccessLocation(req, locationId) {
-  return req.user.role === 'ADMIN' || req.user.location_id === locationId;
+function locationScope(req, requestedValue, column, params) {
+  const requested = validUuid(requestedValue) ? String(requestedValue) : null;
+  if (requested) {
+    if (!canAccessLocation(req, requested)) {
+      const error = new Error('Local não disponível para este usuário.');
+      error.status = 403;
+      throw error;
+    }
+    params.push(requested);
+    return `${column}=$${params.length}`;
+  }
+  if (isGlobalAdmin(req.user)) return null;
+  params.push(req.user.location_ids || []);
+  return `${column}=ANY($${params.length}::uuid[])`;
+}
+
+function normalizeLocationIds(value) {
+  const values = Array.isArray(value) ? value : (value ? [value] : []);
+  return [...new Set(values.map(String).filter(validUuid))];
+}
+
+async function ensureLocationsExist(locationIds) {
+  if (!locationIds.length) return true;
+  const result = await pool.query(`SELECT count(*)::int AS count FROM locations WHERE id=ANY($1::uuid[])`, [locationIds]);
+  return result.rows[0].count === locationIds.length;
+}
+
+async function userRecord(userId) {
+  const result = await pool.query(
+    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,
+            COALESCE(array_agg(l.id ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL),'{}'::uuid[]) AS location_ids,
+            COALESCE(json_agg(json_build_object('id',l.id,'name',l.name) ORDER BY l.name)
+              FILTER (WHERE l.id IS NOT NULL),'[]'::json) AS locations
+     FROM users u
+     LEFT JOIN user_locations ul ON ul.user_id=u.id
+     LEFT JOIN locations l ON l.id=ul.location_id
+     WHERE u.id=$1
+     GROUP BY u.id`,
+    [userId]
+  );
+  return result.rows[0] || null;
 }
 
 function emailList(value) {
@@ -282,8 +363,9 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
   if (!user || !user.password_hash || !(await bcrypt.compare(String(req.body.password || ''), user.password_hash))) {
     return res.status(401).json({ error: 'E-mail ou senha inválidos.' });
   }
-  signIn(res, user);
-  res.json({ user: publicUser(user) });
+  const authenticatedUser = await userWithLocations(user.id);
+  signIn(res, authenticatedUser);
+  res.json({ user: publicUser(authenticatedUser) });
 }));
 
 app.post('/api/auth/logout', (_req, res) => {
@@ -322,7 +404,7 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
     `UPDATE users SET google_id=$1,updated_at=now() WHERE id=$2 RETURNING *`,
     [profile.sub, registered.id]
   );
-  signIn(res, result.rows[0]);
+  signIn(res, await userWithLocations(result.rows[0].id));
   res.redirect('/dashboard');
 }));
 
@@ -330,10 +412,15 @@ app.use('/api', requireAuth);
 
 app.get('/api/users', requireAdmin, asyncRoute(async (_req, res) => {
   const result = await pool.query(
-    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.location_id,l.name AS location_name,u.created_at,u.updated_at
+    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,
+            COALESCE(array_agg(l.id ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL),'{}'::uuid[]) AS location_ids,
+            COALESCE(json_agg(json_build_object('id',l.id,'name',l.name) ORDER BY l.name)
+              FILTER (WHERE l.id IS NOT NULL),'[]'::json) AS locations
      FROM users u
-     JOIN locations l ON l.id=u.location_id
-     ORDER BY l.name,u.name,u.email`
+     LEFT JOIN user_locations ul ON ul.user_id=u.id
+     LEFT JOIN locations l ON l.id=ul.location_id
+     GROUP BY u.id
+     ORDER BY u.name,u.email`
   );
   res.json(result.rows);
 }));
@@ -342,64 +429,110 @@ app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
   const name = String(req.body.name || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
-  const role = req.body.role === 'ADMIN' ? 'ADMIN' : 'USER';
-  const locationId = String(req.body.location_id || '');
+  const role = [ROLE_ADMIN, ROLE_LOCAL_ADMIN, ROLE_USER].includes(req.body.role) ? req.body.role : ROLE_USER;
+  const locationIds = role === ROLE_ADMIN ? [] : normalizeLocationIds(req.body.location_ids || req.body.location_id);
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
-  if (!validUuid(locationId)) return res.status(400).json({ error: 'Selecione o local do usuário.' });
-  if (!(await pool.query(`SELECT 1 FROM locations WHERE id=$1`, [locationId])).rowCount) return res.status(400).json({ error: 'O local selecionado não existe.' });
+  if (role !== ROLE_ADMIN && !locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local para o usuário.' });
+  if (!(await ensureLocationsExist(locationIds))) return res.status(400).json({ error: 'Um dos locais selecionados não existe.' });
   if (password.length < 8) return res.status(400).json({ error: 'A senha deve ter pelo menos 8 caracteres.' });
   const hash = await bcrypt.hash(password, 12);
-  const result = await pool.query(
-    `INSERT INTO users(name,email,password_hash,role,is_active,location_id)
-     VALUES($1,$2,$3,$4,$5,$6)
-     RETURNING id,name,email,role,is_active,location_id,created_at,updated_at`,
-    [name, email, hash, role, req.body.is_active !== false, locationId]
-  );
-  res.status(201).json(result.rows[0]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `INSERT INTO users(name,email,password_hash,role,is_active,location_id)
+       VALUES($1,$2,$3,$4,$5,$6)
+       RETURNING id`,
+      [name, email, hash, role, req.body.is_active !== false, locationIds[0] || null]
+    );
+    for (const locationId of locationIds) {
+      await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)`, [result.rows[0].id, locationId]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json(await userRecord(result.rows[0].id));
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const name = String(req.body.name || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
-  const role = req.body.role === 'ADMIN' ? 'ADMIN' : 'USER';
-  const locationId = String(req.body.location_id || '');
+  const role = [ROLE_ADMIN, ROLE_LOCAL_ADMIN, ROLE_USER].includes(req.body.role) ? req.body.role : ROLE_USER;
+  const locationIds = role === ROLE_ADMIN ? [] : normalizeLocationIds(req.body.location_ids || req.body.location_id);
   const isSelf = req.params.id === req.user.id;
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
-  if (!validUuid(locationId)) return res.status(400).json({ error: 'Selecione o local do usuário.' });
-  if (!(await pool.query(`SELECT 1 FROM locations WHERE id=$1`, [locationId])).rowCount) return res.status(400).json({ error: 'O local selecionado não existe.' });
+  if (role !== ROLE_ADMIN && !locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local para o usuário.' });
+  if (!(await ensureLocationsExist(locationIds))) return res.status(400).json({ error: 'Um dos locais selecionados não existe.' });
   if (password && password.length < 8) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 8 caracteres.' });
-  if (isSelf && (role !== 'ADMIN' || req.body.is_active === false)) return res.status(400).json({ error: 'Você não pode remover seu próprio acesso de administrador.' });
+  if (isSelf && (role !== ROLE_ADMIN || req.body.is_active === false)) return res.status(400).json({ error: 'Você não pode remover seu próprio acesso de administrador geral.' });
   const hash = password ? await bcrypt.hash(password, 12) : null;
-  const result = await pool.query(
-    `UPDATE users
-     SET name=$1,email=$2,role=$3,is_active=$4,location_id=$5,
-         password_hash=CASE WHEN $6::text IS NULL THEN password_hash ELSE $6 END,
-         updated_at=now()
-     WHERE id=$7
-     RETURNING id,name,email,role,is_active,location_id,created_at,updated_at`,
-    [name, email, role, req.body.is_active !== false, locationId, hash, req.params.id]
-  );
-  if (!result.rows[0]) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  res.json(result.rows[0]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `UPDATE users
+       SET name=$1,email=$2,role=$3,is_active=$4,location_id=$5,
+           password_hash=CASE WHEN $6::text IS NULL THEN password_hash ELSE $6 END,
+           updated_at=now()
+       WHERE id=$7
+       RETURNING id`,
+      [name, email, role, req.body.is_active !== false, locationIds[0] || null, hash, req.params.id]
+    );
+    if (!result.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+    await client.query(`DELETE FROM user_locations WHERE user_id=$1`, [req.params.id]);
+    for (const locationId of locationIds) {
+      await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)`, [req.params.id, locationId]);
+    }
+    await client.query('COMMIT');
+    res.json(await userRecord(req.params.id));
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.get('/api/locations', asyncRoute(async (_req, res) => {
-  const result = _req.user.role === 'ADMIN'
+  const result = isGlobalAdmin(_req.user)
     ? await pool.query(`SELECT * FROM locations ORDER BY name`)
-    : await pool.query(`SELECT * FROM locations WHERE id=$1 ORDER BY name`, [_req.user.location_id]);
+    : await pool.query(`SELECT * FROM locations WHERE id=ANY($1::uuid[]) ORDER BY name`, [_req.user.location_ids]);
   res.json(result.rows);
 }));
 
-app.post('/api/locations', requireAdmin, asyncRoute(async (req, res) => {
-  const result = await pool.query(
-    `INSERT INTO locations(name,address,report_emails,is_active) VALUES($1,$2,$3,$4) RETURNING *`,
-    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, emailList(req.body.report_emails), req.body.is_active !== false]
-  );
-  res.status(201).json(result.rows[0]);
+app.post('/api/locations', requireLocalManager, asyncRoute(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Informe o nome do local.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `INSERT INTO locations(name,address,report_emails,is_active) VALUES($1,$2,$3,$4) RETURNING *`,
+      [name, String(req.body.address || '').trim() || null, emailList(req.body.report_emails), req.body.is_active !== false]
+    );
+    if (req.user.role === ROLE_LOCAL_ADMIN) {
+      await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [req.user.id, result.rows[0].id]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
-app.put('/api/locations/:id', requireAdmin, asyncRoute(async (req, res) => {
+app.put('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res) => {
+  if (!canAccessLocation(req, req.params.id)) return res.status(403).json({ error: 'Local não disponível para este usuário.' });
   const result = await pool.query(
     `UPDATE locations SET name=$1,address=$2,report_emails=$3,is_active=$4,updated_at=now() WHERE id=$5 RETURNING *`,
     [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, emailList(req.body.report_emails), req.body.is_active !== false, req.params.id]
@@ -407,23 +540,25 @@ app.put('/api/locations/:id', requireAdmin, asyncRoute(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
-app.delete('/api/locations/:id', requireAdmin, asyncRoute(async (req, res) => {
+app.delete('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res) => {
+  if (!canAccessLocation(req, req.params.id)) return res.status(403).json({ error: 'Local não disponível para este usuário.' });
   await pool.query(`UPDATE locations SET is_active=false,updated_at=now() WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
 }));
 
 app.get('/api/pools', asyncRoute(async (req, res) => {
   const args = [];
-  let where = '';
-  const locationId = requestedLocation(req, req.query.location_id);
-  if (locationId) { args.push(locationId); where = `WHERE p.location_id=$1`; }
+  const scope = locationScope(req, req.query.location_id, 'p.location_id', args);
+  const where = scope ? `WHERE ${scope}` : '';
   const result = await pool.query(
     `SELECT p.*,l.name AS location_name FROM pools p JOIN locations l ON l.id=p.location_id ${where} ORDER BY p.name`, args
   );
   res.json(result.rows);
 }));
 
-app.post('/api/pools', requireAdmin, asyncRoute(async (req, res) => {
+app.post('/api/pools', requireLocalManager, asyncRoute(async (req, res) => {
+  if (!validUuid(req.body.location_id)) return res.status(400).json({ error: 'Selecione um local válido.' });
+  if (!canAccessLocation(req, req.body.location_id)) return res.status(403).json({ error: 'Local não disponível para este usuário.' });
   const result = await pool.query(
     `INSERT INTO pools(location_id,name,pool_location,volume_liters,is_active) VALUES($1,$2,$3,$4,$5) RETURNING *`,
     [req.body.location_id, String(req.body.name || '').trim(), String(req.body.pool_location || '').trim() || null, req.body.volume_liters || null, req.body.is_active !== false]
@@ -431,7 +566,13 @@ app.post('/api/pools', requireAdmin, asyncRoute(async (req, res) => {
   res.status(201).json(result.rows[0]);
 }));
 
-app.put('/api/pools/:id', requireAdmin, asyncRoute(async (req, res) => {
+app.put('/api/pools/:id', requireLocalManager, asyncRoute(async (req, res) => {
+  if (!validUuid(req.body.location_id)) return res.status(400).json({ error: 'Selecione um local válido.' });
+  const existing = (await pool.query(`SELECT location_id FROM pools WHERE id=$1`, [req.params.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: 'Piscina não encontrada.' });
+  if (!canAccessLocation(req, existing.location_id) || !canAccessLocation(req, req.body.location_id)) {
+    return res.status(403).json({ error: 'Piscina ou local não disponível para este usuário.' });
+  }
   const result = await pool.query(
     `UPDATE pools SET location_id=$1,name=$2,pool_location=$3,volume_liters=$4,is_active=$5,updated_at=now() WHERE id=$6 RETURNING *`,
     [req.body.location_id, String(req.body.name || '').trim(), String(req.body.pool_location || '').trim() || null, req.body.volume_liters || null, req.body.is_active !== false, req.params.id]
@@ -439,21 +580,27 @@ app.put('/api/pools/:id', requireAdmin, asyncRoute(async (req, res) => {
   res.json(result.rows[0]);
 }));
 
-app.delete('/api/pools/:id', requireAdmin, asyncRoute(async (req, res) => {
+app.delete('/api/pools/:id', requireLocalManager, asyncRoute(async (req, res) => {
+  const existing = (await pool.query(`SELECT location_id FROM pools WHERE id=$1`, [req.params.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: 'Piscina não encontrada.' });
+  if (!canAccessLocation(req, existing.location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
   await pool.query(`UPDATE pools SET is_active=false,updated_at=now() WHERE id=$1`, [req.params.id]);
   res.json({ ok: true });
 }));
 
 app.get('/api/dashboard', asyncRoute(async (req, res) => {
-  const locationId = requestedLocation(req, req.query.location_id);
   const poolId = validUuid(req.query.pool_id) ? req.query.pool_id : null;
   const params = [];
   const conditions = [`m.status='COMPLETED'`];
-  if (locationId) { params.push(locationId); conditions.push(`p.location_id=$${params.length}`); }
+  const scope = locationScope(req, req.query.location_id, 'p.location_id', params);
+  if (scope) conditions.push(scope);
   if (poolId) { params.push(poolId); conditions.push(`m.pool_id=$${params.length}`); }
   const where = conditions.join(' AND ');
+  const poolParams = [];
+  const poolScope = locationScope(req, req.query.location_id, 'p.location_id', poolParams);
+  const activePoolsWhere = [`p.is_active=true`, ...(poolScope ? [poolScope] : [])].join(' AND ');
   const [activePools, today, total, history, trends] = await Promise.all([
-    pool.query(`SELECT count(*)::int AS count FROM pools p WHERE p.is_active=true ${locationId ? `AND p.location_id=$1` : ''}`, locationId ? [locationId] : []),
+    pool.query(`SELECT count(*)::int AS count FROM pools p WHERE ${activePoolsWhere}`, poolParams),
     pool.query(`SELECT count(*)::int AS count FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where} AND (m.started_at AT TIME ZONE 'America/Sao_Paulo')::date=(now() AT TIME ZONE 'America/Sao_Paulo')::date`, params),
     pool.query(`SELECT count(*)::int AS count FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where}`, params),
     pool.query(`SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.notes,p.name AS pool_name,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE ${where} ORDER BY m.started_at DESC LIMIT 100`, params),
@@ -463,7 +610,6 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/reports/maintenances', asyncRoute(async (req, res) => {
-  const locationId = requestedLocation(req, req.query.location_id);
   const poolId = req.query.pool_id ? String(req.query.pool_id) : null;
   const dateFrom = req.query.date_from ? String(req.query.date_from) : null;
   const dateTo = req.query.date_to ? String(req.query.date_to) : null;
@@ -473,7 +619,8 @@ app.get('/api/reports/maintenances', asyncRoute(async (req, res) => {
   if (dateFrom && dateTo && dateFrom > dateTo) return res.status(400).json({ error: 'A data inicial não pode ser maior que a data final.' });
   const params = [];
   const conditions = [`m.status='COMPLETED'`];
-  if (locationId) { params.push(locationId); conditions.push(`p.location_id=$${params.length}`); }
+  const scope = locationScope(req, req.query.location_id, 'p.location_id', params);
+  if (scope) conditions.push(scope);
   if (poolId) { params.push(poolId); conditions.push(`m.pool_id=$${params.length}`); }
   if (dateFrom) { params.push(dateFrom); conditions.push(`(m.started_at AT TIME ZONE 'America/Sao_Paulo')::date >= $${params.length}::date`); }
   if (dateTo) { params.push(dateTo); conditions.push(`(m.started_at AT TIME ZONE 'America/Sao_Paulo')::date <= $${params.length}::date`); }
@@ -527,7 +674,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
   }
   const services = JSON.parse(req.body.services || '[]');
   const target = (await pool.query(`SELECT p.location_id,m.created_by FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
-  if (!target || !canAccessLocation(req, target.location_id) || (req.user.role !== 'ADMIN' && target.created_by !== req.user.id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
+  if (!target || !canAccessLocation(req, target.location_id) || (!canManageLocalData(req.user) && target.created_by !== req.user.id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
   const client = await pool.connect();
   let completedMaintenance;
   try {
@@ -599,6 +746,7 @@ app.get(/^(?!\/api\/|\/auth\/|\/health$).*/, (_req, res) => res.sendFile(path.jo
 
 app.use((error, _req, res, _next) => {
   console.error(error);
+  if (error.status) return res.status(error.status).json({ error: error.message });
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Cada foto deve ter no máximo 6 MB.' });
   if (error.code === '23505') return res.status(409).json({ error: 'Já existe um usuário cadastrado com este e-mail.' });
   res.status(500).json({ error: 'Não foi possível concluir a operação.', detail: isProduction ? undefined : error.message });

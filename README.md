@@ -25,7 +25,9 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 - Geração de imagem dos detalhes da manutenção para copiar, compartilhar ou baixar no WhatsApp
 - Envio do relatório de evolução química por e-mail
 - Layout responsivo para celular
-- Página avulsa de usuários em `/usuarios`, visível somente para administradores
+- Página avulsa de usuários em `/usuarios`, visível somente para o administrador geral
+- Perfis de administrador geral, administrador local e usuário
+- Associação de administradores locais e usuários a um ou mais locais
 - Menu de relatórios com filtros por local, piscina e período, respeitando o acesso de cada usuário
 
 ## Publicação rápida
@@ -39,7 +41,7 @@ Reescrita independente do aplicativo de controle de piscinas. A aplicação não
 
 O sistema cria as tabelas, o local Vivere Palhano e as piscinas Adulto e Infantil na primeira inicialização.
 
-Cada usuário vê somente o próprio serviço em andamento e os dados do local ao qual tem acesso. A troca de tela ou do filtro de local não apaga nem mistura esse acompanhamento. Enquanto houver um serviço aberto, o sistema impede que o mesmo usuário inicie outro.
+Cada usuário vê somente o próprio serviço em andamento e os dados dos locais aos quais tem acesso. A troca de tela ou do filtro de local não apaga nem mistura esse acompanhamento. Enquanto houver um serviço aberto, o sistema impede que o mesmo usuário inicie outro.
 
 ## Nova medição: estabilizador de cloro
 
@@ -140,9 +142,17 @@ A página de usuários não aparece no menu principal. Entre como administrador 
 
 `https://SEU-ENDERECO/usuarios`
 
-Nela é possível cadastrar, editar, redefinir senha, definir o nível de acesso, selecionar o local e ativar ou desativar usuários.
+Nela é possível cadastrar, editar, redefinir senha, definir o nível de acesso, selecionar um ou mais locais e ativar ou desativar usuários.
 
-Cada usuário comum enxerga somente o local ao qual está vinculado, incluindo as piscinas e manutenções desse local. Usuários com perfil `ADMIN` podem visualizar e administrar todos os locais, usuários, piscinas e manutenções.
+Os perfis funcionam assim:
+
+- `ADMIN`: administrador geral. Vê e administra todos os locais, usuários, piscinas, manutenções e relatórios.
+- `LOCAL_ADMIN`: administrador local. Pode administrar locais e piscinas, iniciar e finalizar serviços e consultar relatórios, somente nos locais associados à sua conta. Quando cadastra um novo local, o vínculo com esse local é criado automaticamente.
+- `USER`: usuário comum. Pode iniciar e finalizar os próprios serviços e consultar relatórios dos locais associados à sua conta. Não pode alterar locais ou piscinas.
+
+Administradores locais e usuários comuns podem estar associados a vários locais. Esses vínculos ficam na tabela `user_locations`. Na primeira inicialização desta versão, o sistema copia automaticamente para essa tabela os vínculos antigos que estavam em `users.location_id`.
+
+A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
 
@@ -150,7 +160,8 @@ O login Google somente aceita e-mails previamente cadastrados pelo administrador
 
 - Senhas protegidas com bcrypt
 - Sessão em cookie HTTP-only
-- Perfis ADMIN e USER
-- Cadastros restritos a administradores
+- Perfis ADMIN, LOCAL_ADMIN e USER
+- Cadastro de usuários restrito ao administrador geral
+- Cadastros de locais e piscinas permitidos ao administrador geral e ao administrador local, sempre respeitando os locais associados
 - Queries parametrizadas
 - Limite de tamanho e tipo para fotos

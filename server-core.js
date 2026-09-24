@@ -51,8 +51,16 @@ async function initializeDatabase() {
        SELECT $1,'Piscina Adulto','Área de Lazer',200000,true
        WHERE NOT EXISTS (SELECT 1 FROM pools WHERE location_id=$1 AND name='Piscina Adulto')`, [locationId]
     );
-    await pool.query(`UPDATE users SET location_id=$1,updated_at=now() WHERE location_id IS NULL`, [locationId]);
-    await pool.query(`ALTER TABLE users ALTER COLUMN location_id SET NOT NULL`);
+    await pool.query(`ALTER TABLE users ALTER COLUMN location_id DROP NOT NULL`);
+    await pool.query(
+      `INSERT INTO user_locations(user_id,location_id)
+       SELECT u.id,$1
+       FROM users u
+       WHERE u.role<>'ADMIN'
+         AND NOT EXISTS (SELECT 1 FROM user_locations ul WHERE ul.user_id=u.id)
+       ON CONFLICT DO NOTHING`,
+      [locationId]
+    );
   }
 
 }
