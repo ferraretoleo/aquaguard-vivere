@@ -650,7 +650,7 @@ app.get('/api/reports/maintenances', asyncRoute(async (req, res) => {
     summary: {
       total: rows.length,
       pools: new Set(rows.map(row => row.pool_id)).size,
-      services: rows.reduce((total, row) => total + (row.services || []).length, 0)
+      services: rows.length
     },
     rows
   });

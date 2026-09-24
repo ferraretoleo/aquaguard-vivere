@@ -255,7 +255,7 @@ function reportPoolOptions(pools,selected=''){
 
 function reportRows(rows){
   if(!rows.length)return '<div class="empty">Nenhuma manutenção encontrada para os filtros informados.</div>';
-  return `<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Data</th><th>Local</th><th>Piscina</th><th>Executante</th><th>pH</th><th>Cloro</th><th>Alcalinidade</th><th>Estabilizador</th><th>Serviços</th><th class="no-print"></th></tr></thead><tbody>${rows.map(m=>`<tr><td>${brDate(m.started_at)}</td><td>${esc(m.location_name)}</td><td>${esc(m.pool_name)}</td><td>${esc(m.executor)}</td><td>${esc(m.ph??'-')}</td><td>${esc(m.chlorine??'-')} ppm</td><td>${esc(m.alkalinity??'-')} ppm</td><td>${esc(m.stabilizer??'-')} ppm</td><td>${(m.services||[]).length}</td><td class="no-print"><button class="btn outline report-detail" data-id="${m.id}">Detalhes</button></td></tr>`).join('')}</tbody></table></div>`;
+  return `<div class="report-table-wrap"><table class="report-table"><thead><tr><th>Data</th><th>Local</th><th>Piscina</th><th>Executante</th><th>pH</th><th>Cloro</th><th>Alcalinidade</th><th>Estabilizador</th><th>Itens executados</th><th class="no-print"></th></tr></thead><tbody>${rows.map(m=>`<tr><td>${brDate(m.started_at)}</td><td>${esc(m.location_name)}</td><td>${esc(m.pool_name)}</td><td>${esc(m.executor)}</td><td>${esc(m.ph??'-')}</td><td>${esc(m.chlorine??'-')} ppm</td><td>${esc(m.alkalinity??'-')} ppm</td><td>${esc(m.stabilizer??'-')} ppm</td><td>${(m.services||[]).length}</td><td class="no-print"><button class="btn outline report-detail" data-id="${m.id}">Detalhes</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 
 async function loadReportResults(){
