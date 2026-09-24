@@ -152,6 +152,8 @@ Os perfis funcionam assim:
 
 Administradores locais e usuários comuns podem estar associados a vários locais. Esses vínculos ficam na tabela `user_locations`. Na primeira inicialização desta versão, o sistema copia automaticamente para essa tabela os vínculos antigos que estavam em `users.location_id`.
 
+Cada local também pode armazenar vários contatos para futuros alertas e relatórios. Os contatos ficam separados dos e-mails e são compostos por nome e telefone com DDD. Esta versão apenas cadastra e consulta esses dados, sem fazer envio automático por WhatsApp ou SMS.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.

@@ -19,10 +19,12 @@ CREATE TABLE IF NOT EXISTS locations (
   name varchar(180) NOT NULL,
   address text,
   report_emails text[] NOT NULL DEFAULT '{}',
+  notification_contacts jsonb NOT NULL DEFAULT '[]'::jsonb,
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS notification_contacts jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id uuid;
 DO $$
