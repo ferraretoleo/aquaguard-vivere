@@ -527,8 +527,8 @@ app.post('/api/locations', requireLocalManager, asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO locations(name,address,report_emails,notification_contacts,is_active) VALUES($1,$2,$3,$4,$5) RETURNING *`,
-      [name, String(req.body.address || '').trim() || null, emailList(req.body.report_emails), notificationContacts(req.body.notification_contacts), req.body.is_active !== false]
+      `INSERT INTO locations(name,address,report_emails,notification_contacts,is_active) VALUES($1,$2,$3,$4::jsonb,$5) RETURNING *`,
+      [name, String(req.body.address || '').trim() || null, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false]
     );
     if (req.user.role === ROLE_LOCAL_ADMIN) {
       await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [req.user.id, result.rows[0].id]);
@@ -546,8 +546,8 @@ app.post('/api/locations', requireLocalManager, asyncRoute(async (req, res) => {
 app.put('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res) => {
   if (!canAccessLocation(req, req.params.id)) return res.status(403).json({ error: 'Local não disponível para este usuário.' });
   const result = await pool.query(
-    `UPDATE locations SET name=$1,address=$2,report_emails=$3,notification_contacts=$4,is_active=$5,updated_at=now() WHERE id=$6 RETURNING *`,
-    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, emailList(req.body.report_emails), notificationContacts(req.body.notification_contacts), req.body.is_active !== false, req.params.id]
+    `UPDATE locations SET name=$1,address=$2,report_emails=$3,notification_contacts=$4::jsonb,is_active=$5,updated_at=now() WHERE id=$6 RETURNING *`,
+    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false, req.params.id]
   );
   res.json(result.rows[0]);
 }));
