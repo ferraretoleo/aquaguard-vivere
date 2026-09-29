@@ -142,7 +142,7 @@ async function renderDashboard(poolId='') {
   $$('.history-open').forEach(b=>b.onclick=()=>openMaintenance(b.dataset.id));
 }
 
-function dashboardItineraryCard(item){const status=itineraryStatus(item);return `<button type="button" class="dashboard-itinerary-card" data-dashboard-itinerary="${item.id}"><div class="itinerary-title-line"><strong>${esc(item.title)}</strong><span class="badge ${status==='Concluído'?'':status==='Em andamento'?'progress':'off'}">${status}</span></div><span class="dashboard-itinerary-date">📅 ${dateOnlyBr(item.service_date)}</span>${isGeneralAdmin()?`<span class="dashboard-itinerary-user">👤 ${esc(item.created_by_name)}</span>`:''}<span class="dashboard-itinerary-progress"><i style="width:${item.total_stops?Math.round(Number(item.visited_stops)*100/Number(item.total_stops)):0}%"></i></span><small>${item.visited_stops}/${item.total_stops} locais visitados</small></button>`;}
+function dashboardItineraryCard(item){const status=itineraryStatus(item);return `<button type="button" class="dashboard-itinerary-card" data-dashboard-itinerary="${item.id}"><div class="itinerary-title-line"><strong>${esc(item.title)}</strong><span class="badge ${status==='Concluído'?'':status==='Em andamento'?'progress':'off'}">${status}</span></div><span class="dashboard-itinerary-date">📅 ${dateOnlyBr(item.service_date)}</span>${canManageLocalData()?`<span class="dashboard-itinerary-user">👤 ${esc(item.responsible_name)}</span>`:''}<span class="dashboard-itinerary-progress"><i style="width:${item.total_stops?Math.round(Number(item.visited_stops)*100/Number(item.total_stops)):0}%"></i></span><small>${item.visited_stops}/${item.total_stops} locais visitados</small></button>`;}
 
 function historyCard(m) {
   return `<article class="history-card"><div><h3>${esc(m.pool_name)} - ${esc(m.location_name)}</h3><p>${esc(m.executor)}</p><p>${brDate(m.started_at)}</p><div class="chips"><span class="chip ${isIdeal('ph',m.ph)?'good':''}">pH: ${esc(m.ph)}</span><span class="chip ${isIdeal('chlorine',m.chlorine)?'good':''}">Cloro: ${esc(m.chlorine)}</span><span class="chip ${isIdeal('alk',m.alkalinity)?'good':''}">Alc: ${esc(m.alkalinity)}</span><span class="chip ${isIdeal('stabilizer',m.stabilizer)?'good':''}">Estab: ${esc(m.stabilizer??'-')} ppm</span></div><p>${(m.services||[]).length} serviço(s) realizado(s)</p></div><button class="history-open" data-id="${m.id}" title="Ver detalhes">⌕</button></article>`;
@@ -344,7 +344,7 @@ async function disableLocation(id){if(!confirm('Deseja desativar este local? Os 
 
 function dateOnlyBr(value){return value?String(value).slice(0,10).split('-').reverse().join('/'):'-';}
 function itineraryStatus(item){if(!item.total_stops)return 'Sem paradas';if(item.visited_stops===item.total_stops)return 'Concluído';if(item.visited_stops>0)return 'Em andamento';return 'Planejado';}
-function itineraryCard(item){const status=itineraryStatus(item);return `<article class="item-card itinerary-card"><div class="item-main"><div class="itinerary-title-line"><h3>${esc(item.title)}</h3><span class="badge ${status==='Concluído'?'':status==='Em andamento'?'progress':'off'}">${status}</span></div><div class="item-meta"><span>📅 ${dateOnlyBr(item.service_date)}</span><span>👤 ${esc(item.created_by_name)}</span><span>📍 ${item.visited_stops}/${item.total_stops} visitados</span><span>✓ ${item.serviced_stops} com serviço</span>${item.no_service_stops?`<span>⚠ ${item.no_service_stops} sem serviço</span>`:''}</div></div><div class="actions"><button class="btn primary" data-open-itinerary="${item.id}">Abrir</button>${Number(item.visited_stops)===0?`<button class="btn outline" data-edit-itinerary="${item.id}">Editar</button><button class="btn danger" data-delete-itinerary="${item.id}">Excluir</button>`:''}</div></article>`;}
+function itineraryCard(item){const status=itineraryStatus(item);return `<article class="item-card itinerary-card"><div class="item-main"><div class="itinerary-title-line"><h3>${esc(item.title)}</h3><span class="badge ${status==='Concluído'?'':status==='Em andamento'?'progress':'off'}">${status}</span></div><div class="item-meta"><span>📅 ${dateOnlyBr(item.service_date)}</span><span>👤 Responsável: ${esc(item.responsible_name)}</span><span>📍 ${item.visited_stops}/${item.total_stops} visitados</span><span>✓ ${item.serviced_stops} com serviço</span>${item.no_service_stops?`<span>⚠ ${item.no_service_stops} sem serviço</span>`:''}</div></div><div class="actions"><button class="btn primary" data-open-itinerary="${item.id}">Abrir</button>${item.can_edit&&Number(item.visited_stops)===0?`<button class="btn outline" data-edit-itinerary="${item.id}">Editar</button><button class="btn danger" data-delete-itinerary="${item.id}">Excluir</button>`:''}</div></article>`;}
 
 async function renderItineraries(){
   const queryDate=new URLSearchParams(location.search).get('service_date')||brazilInputDate();
@@ -358,13 +358,22 @@ async function renderItineraries(){
   $$('[data-delete-itinerary]').forEach(button=>button.onclick=()=>deleteItinerary(button.dataset.deleteItinerary));
 }
 
-function itineraryLocationRows(existing){
+function itineraryLocationRows(existing,responsible){
   const positions=new Map((existing?.stops||[]).map(stop=>[stop.location_id,stop.position]));
-  return state.locations.filter(item=>item.is_active).map((item,index)=>`<label class="itinerary-location"><input type="checkbox" data-itinerary-location value="${item.id}" ${positions.has(item.id)?'checked':''}><span><strong>${esc(item.name)}</strong><small>${esc(item.address||'Endereço não informado')}</small></span><input type="number" min="1" data-itinerary-position value="${positions.get(item.id)||index+1}" aria-label="Ordem da visita"></label>`).join('');
+  const allowed=responsible?.role==='ADMIN'?null:new Set(responsible?.location_ids||[]);
+  const locations=state.locations.filter(item=>item.is_active&&(!allowed||allowed.has(item.id)));
+  return locations.map((item,index)=>`<label class="itinerary-location"><input type="checkbox" data-itinerary-location value="${item.id}" ${positions.has(item.id)?'checked':''}><span><strong>${esc(item.name)}</strong><small>${esc(item.address||'Endereço não informado')}</small></span><input type="number" min="1" data-itinerary-position value="${positions.get(item.id)||index+1}" aria-label="Ordem da visita"></label>`).join('')||'<div class="empty">Este usuário não possui locais disponíveis em comum.</div>';
 }
 
-function itineraryFormModal(existing=null){
-  openModal(existing?'Editar itinerário':'Novo itinerário',`<form id="itineraryForm"><div class="form-grid"><div class="field full-row"><span>Nome do itinerário *</span><input name="title" value="${esc(existing?.title||'Rota de visitas')}" required></div><div class="field"><span>Data *</span><input name="service_date" type="date" value="${esc(existing?.service_date?String(existing.service_date).slice(0,10):brazilInputDate())}" required></div><div class="field full-row"><span>Locais e ordem das visitas *</span><div class="itinerary-locations">${itineraryLocationRows(existing)}</div><small>Marque os locais e informe a ordem em que devem ser visitados.</small></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">Salvar itinerário</button></div></form>`);
+async function itineraryFormModal(existing=null){
+  let assignees;
+  try{assignees=await api('/api/itinerary-users');}catch(error){toast(error.message,true);return;}
+  const selectedId=existing?.responsible_user_id||state.user.id;
+  const selected=assignees.find(user=>user.id===selectedId)||assignees[0];
+  if(!selected){toast('Nenhum usuário disponível para receber o itinerário.',true);return;}
+  const responsibleField=canManageLocalData()?`<div class="field"><span>Usuário responsável *</span><select name="responsible_user_id" id="itineraryResponsible" required>${assignees.map(user=>`<option value="${user.id}" ${user.id===selected.id?'selected':''}>${esc(user.name)} · ${esc(roleLabel(user.role))}</option>`).join('')}</select><small>Os locais serão limitados aos associados ao usuário escolhido.</small></div>`:`<input type="hidden" name="responsible_user_id" value="${selected.id}">`;
+  openModal(existing?'Editar itinerário':'Novo itinerário',`<form id="itineraryForm"><div class="form-grid"><div class="field full-row"><span>Nome do itinerário *</span><input name="title" value="${esc(existing?.title||'Rota de visitas')}" required></div><div class="field"><span>Data *</span><input name="service_date" type="date" value="${esc(existing?.service_date?String(existing.service_date).slice(0,10):brazilInputDate())}" required></div>${responsibleField}<div class="field full-row"><span>Locais e ordem das visitas *</span><div id="itineraryLocations" class="itinerary-locations">${itineraryLocationRows(existing,selected)}</div><small>Marque os locais e informe a ordem em que devem ser visitados.</small></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">Salvar itinerário</button></div></form>`);
+  if($('#itineraryResponsible'))$('#itineraryResponsible').onchange=event=>{const responsible=assignees.find(user=>user.id===event.target.value);$('#itineraryLocations').innerHTML=itineraryLocationRows(existing,responsible);};
   $('#itineraryForm').onsubmit=async event=>{
     event.preventDefault();
     const form=event.currentTarget,values=Object.fromEntries(new FormData(form));
@@ -372,7 +381,7 @@ function itineraryFormModal(existing=null){
     if(!selected.length){toast('Selecione pelo menos um local.',true);return;}
     const missingAddress=selected.find(item=>!String(item.address||'').trim());
     if(missingAddress){toast('Todos os locais do itinerário precisam ter endereço cadastrado.',true);return;}
-    try{await api(existing?`/api/itineraries/${existing.id}`:'/api/itineraries',{method:existing?'PUT':'POST',body:JSON.stringify({title:values.title,service_date:values.service_date,location_ids:selected.map(item=>item.id)})});closeModal();toast(`Itinerário ${existing?'atualizado':'criado'}.`);go(`/itineraries?service_date=${encodeURIComponent(values.service_date)}`);}catch(error){toast(error.message,true);}
+    try{await api(existing?`/api/itineraries/${existing.id}`:'/api/itineraries',{method:existing?'PUT':'POST',body:JSON.stringify({title:values.title,service_date:values.service_date,responsible_user_id:values.responsible_user_id,location_ids:selected.map(item=>item.id)})});closeModal();toast(`Itinerário ${existing?'atualizado':'criado'}.`);go(`/itineraries?service_date=${encodeURIComponent(values.service_date)}`);}catch(error){toast(error.message,true);}
   };
 }
 
@@ -394,7 +403,7 @@ function itineraryStopCard(stop){
 async function openItinerary(id){
   try{
     const item=await api(`/api/itineraries/${id}`),mapsUrl=googleMapsRoute(item.stops);
-    openModal(item.title,`<div class="itinerary-detail-head"><div><strong>${dateOnlyBr(item.service_date)}</strong><small>Criado por ${esc(item.created_by_name)}</small></div>${mapsUrl?`<a class="btn primary" href="${esc(mapsUrl)}" target="_blank" rel="noopener">Abrir rota no Google Maps</a>`:''}</div><div class="itinerary-stops">${item.stops.map(itineraryStopCard).join('')}</div>`);
+    openModal(item.title,`<div class="itinerary-detail-head"><div><strong>${dateOnlyBr(item.service_date)}</strong><small>Responsável: ${esc(item.responsible_name)}</small>${item.created_by_name!==item.responsible_name?`<small>Criado por ${esc(item.created_by_name)}</small>`:''}</div>${mapsUrl?`<a class="btn primary" href="${esc(mapsUrl)}" target="_blank" rel="noopener">Abrir rota no Google Maps</a>`:''}</div><div class="itinerary-stops">${item.stops.map(itineraryStopCard).join('')}</div>`);
     $$('[data-start-stop]').forEach(button=>button.onclick=async()=>{const locationId=button.dataset.locationId;state.locationId=locationId;localStorage.setItem('aquaguard_location',locationId);state.pools=await api(`/api/pools?location_id=${encodeURIComponent(locationId)}`);closeModal();go(`/startservice?itinerary_stop_id=${encodeURIComponent(button.dataset.startStop)}&location_id=${encodeURIComponent(locationId)}`);});
     $$('[data-no-service]').forEach(button=>button.onclick=()=>noServiceModal(id,button.dataset.noService));
     $$('[data-maintenance-id]').forEach(button=>button.onclick=()=>openMaintenance(button.dataset.maintenanceId));

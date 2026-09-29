@@ -161,10 +161,15 @@ CREATE TABLE IF NOT EXISTS itineraries (
   title varchar(180) NOT NULL,
   service_date date NOT NULL,
   created_by uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  responsible_user_id uuid REFERENCES users(id) ON DELETE RESTRICT,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE itineraries ADD COLUMN IF NOT EXISTS responsible_user_id uuid REFERENCES users(id) ON DELETE RESTRICT;
+UPDATE itineraries SET responsible_user_id=created_by WHERE responsible_user_id IS NULL;
+ALTER TABLE itineraries ALTER COLUMN responsible_user_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_itineraries_date_user ON itineraries(service_date DESC, created_by);
+CREATE INDEX IF NOT EXISTS ix_itineraries_responsible ON itineraries(responsible_user_id, service_date DESC);
 
 CREATE TABLE IF NOT EXISTS itinerary_stops (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

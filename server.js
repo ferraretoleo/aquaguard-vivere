@@ -116,8 +116,54 @@ function canAccessLocation(req, locationId) {
   return isGlobalAdmin(req.user) || (req.user.location_ids || []).includes(String(locationId));
 }
 
-function canAccessItinerary(req, createdBy) {
-  return isGlobalAdmin(req.user) || String(createdBy) === String(req.user.id);
+function itineraryScope(req, alias, params) {
+  if (isGlobalAdmin(req.user)) return null;
+  if (req.user.role === ROLE_USER) {
+    params.push(req.user.id);
+    return `${alias}.responsible_user_id=$${params.length}`;
+  }
+  params.push(req.user.location_ids || []);
+  return `(
+    EXISTS(SELECT 1 FROM itinerary_stops scope_stops WHERE scope_stops.itinerary_id=${alias}.id)
+    AND NOT EXISTS(
+      SELECT 1 FROM itinerary_stops outside_stops
+      WHERE outside_stops.itinerary_id=${alias}.id
+        AND NOT (outside_stops.location_id=ANY($${params.length}::uuid[]))
+    )
+  )`;
+}
+
+async function canAccessItinerary(req, itineraryId) {
+  const params = [itineraryId];
+  const scope = itineraryScope(req, 'i', params);
+  const result = await pool.query(
+    `SELECT 1 FROM itineraries i WHERE i.id=$1${scope ? ` AND ${scope}` : ''}`,
+    params
+  );
+  return Boolean(result.rows[0]);
+}
+
+async function itineraryResponsible(req, requestedUserId, locationIds) {
+  const targetId = canManageLocalData(req.user) && validUuid(requestedUserId)
+    ? String(requestedUserId)
+    : String(req.user.id);
+  if (req.user.role === ROLE_USER && targetId !== String(req.user.id)) {
+    const error = new Error('O usuário comum só pode criar itinerários para si mesmo.'); error.status = 403; throw error;
+  }
+  const target = await userWithLocations(targetId);
+  if (!target?.is_active) { const error = new Error('Selecione um usuário ativo para o itinerário.'); error.status = 400; throw error; }
+  const targetLocations = Array.isArray(target.location_ids) ? target.location_ids.map(String) : [];
+  if (req.user.role === ROLE_LOCAL_ADMIN && targetId !== String(req.user.id)) {
+    const shared = target.role !== ROLE_ADMIN && targetLocations.some(id => (req.user.location_ids || []).includes(id));
+    if (!shared) { const error = new Error('O usuário escolhido não está associado aos mesmos locais deste administrador.'); error.status = 403; throw error; }
+  }
+  if (locationIds.some(id => !canAccessLocation(req, id))) {
+    const error = new Error('Um ou mais locais não estão disponíveis para este administrador.'); error.status = 403; throw error;
+  }
+  if (target.role !== ROLE_ADMIN && locationIds.some(id => !targetLocations.includes(String(id)))) {
+    const error = new Error('Todos os locais do itinerário devem estar associados ao usuário responsável.'); error.status = 403; throw error;
+  }
+  return target;
 }
 
 function locationScope(req, requestedValue, column, params) {
@@ -764,6 +810,33 @@ app.delete('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res
   res.json({ ok: true });
 }));
 
+app.get('/api/itinerary-users', asyncRoute(async (req, res) => {
+  const params = [];
+  const conditions = ['u.is_active=true'];
+  if (req.user.role === ROLE_USER) {
+    params.push(req.user.id);
+    conditions.push(`u.id=$${params.length}`);
+  } else if (req.user.role === ROLE_LOCAL_ADMIN) {
+    params.push(req.user.id, req.user.location_ids || []);
+    conditions.push(`(u.id=$1 OR (u.role<>'ADMIN' AND EXISTS(
+      SELECT 1 FROM user_locations shared_ul
+      WHERE shared_ul.user_id=u.id AND shared_ul.location_id=ANY($2::uuid[])
+    )))`);
+  }
+  const result = await pool.query(
+    `SELECT u.id,u.name,u.email,u.role,
+            COALESCE(array_agg(ul.location_id ORDER BY ul.created_at)
+              FILTER (WHERE ul.location_id IS NOT NULL),'{}'::uuid[]) AS location_ids
+     FROM users u
+     LEFT JOIN user_locations ul ON ul.user_id=u.id
+     WHERE ${conditions.join(' AND ')}
+     GROUP BY u.id
+     ORDER BY CASE WHEN u.id=$${params.push(req.user.id)} THEN 0 ELSE 1 END,u.name`,
+    params
+  );
+  res.json(result.rows);
+}));
+
 app.get('/api/itineraries', asyncRoute(async (req, res) => {
   const serviceDate = String(req.query.service_date || '').trim();
   const dateFrom = String(req.query.date_from || '').trim();
@@ -773,28 +846,33 @@ app.get('/api/itineraries', asyncRoute(async (req, res) => {
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 200, 1), 200);
   const params = [];
   const conditions = [];
-  if (!isGlobalAdmin(req.user)) { params.push(req.user.id); conditions.push(`i.created_by=$${params.length}`); }
+  const scope = itineraryScope(req, 'i', params);
+  if (scope) conditions.push(scope);
   if (serviceDate) { params.push(serviceDate); conditions.push(`i.service_date=$${params.length}::date`); }
   if (dateFrom) { params.push(dateFrom); conditions.push(`i.service_date>=$${params.length}::date`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const having = onlyOpen ? `HAVING count(s.id) FILTER (WHERE s.status='PENDING') > 0` : '';
   params.push(limit);
   const result = await pool.query(
-    `SELECT i.*,u.name AS created_by_name,
+    `SELECT i.*,responsible.name AS responsible_name,creator.name AS created_by_name,
             count(s.id)::int AS total_stops,
             count(s.id) FILTER (WHERE s.status<>'PENDING')::int AS visited_stops,
             count(s.id) FILTER (WHERE s.status='VISITED_SERVICE')::int AS serviced_stops,
             count(s.id) FILTER (WHERE s.status='VISITED_NO_SERVICE')::int AS no_service_stops
      FROM itineraries i
-     JOIN users u ON u.id=i.created_by
+     JOIN users responsible ON responsible.id=i.responsible_user_id
+     JOIN users creator ON creator.id=i.created_by
      LEFT JOIN itinerary_stops s ON s.itinerary_id=i.id
      ${where}
-     GROUP BY i.id,u.name
+     GROUP BY i.id,responsible.name,creator.name
      ${having}
      ORDER BY i.service_date ${dateFrom?'ASC':'DESC'},i.created_at DESC
      LIMIT $${params.length}`, params
   );
-  res.json(result.rows);
+  res.json(result.rows.map(row => ({
+    ...row,
+    can_edit: canManageLocalData(req.user) || String(row.created_by) === String(req.user.id)
+  })));
 }));
 
 app.get('/api/reports/itineraries', asyncRoute(async (req, res) => {
@@ -806,14 +884,15 @@ app.get('/api/reports/itineraries', asyncRoute(async (req, res) => {
   if (dateFrom > dateTo) return res.status(400).json({ error: 'A data inicial não pode ser maior que a data final.' });
   const params = [dateFrom, dateTo];
   const conditions = [`i.service_date BETWEEN $1::date AND $2::date`];
-  if (!isGlobalAdmin(req.user)) { params.push(req.user.id); conditions.push(`i.created_by=$${params.length}`); }
+  const scope = itineraryScope(req, 'i', params);
+  if (scope) conditions.push(scope);
   const rows = (await pool.query(
     `SELECT i.id AS itinerary_id,i.title,i.service_date,u.name AS responsible_name,
             s.id AS stop_id,s.position,s.status,s.visit_notes,s.visited_at,
             l.id AS location_id,l.name AS location_name,l.address,
             m.id AS maintenance_id,m.started_at,m.ended_at,p.name AS pool_name
      FROM itineraries i
-     JOIN users u ON u.id=i.created_by
+     JOIN users u ON u.id=i.responsible_user_id
      JOIN itinerary_stops s ON s.itinerary_id=i.id
      JOIN locations l ON l.id=s.location_id
      LEFT JOIN maintenances m ON m.id=s.maintenance_id
@@ -834,11 +913,15 @@ app.get('/api/reports/itineraries', asyncRoute(async (req, res) => {
 
 app.get('/api/itineraries/:id', asyncRoute(async (req, res) => {
   const itinerary = (await pool.query(
-    `SELECT i.*,u.name AS created_by_name FROM itineraries i JOIN users u ON u.id=i.created_by WHERE i.id=$1`,
+    `SELECT i.*,responsible.name AS responsible_name,creator.name AS created_by_name
+     FROM itineraries i
+     JOIN users responsible ON responsible.id=i.responsible_user_id
+     JOIN users creator ON creator.id=i.created_by
+     WHERE i.id=$1`,
     [req.params.id]
   )).rows[0];
   if (!itinerary) return res.status(404).json({ error: 'Itinerário não encontrado.' });
-  if (!canAccessItinerary(req, itinerary.created_by)) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  if (!(await canAccessItinerary(req, itinerary.id))) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
   const stops = (await pool.query(
     `SELECT s.*,l.name AS location_name,l.address,l.document_number,
             m.pool_id,p.name AS pool_name,m.started_at,m.ended_at
@@ -859,15 +942,16 @@ app.post('/api/itineraries', asyncRoute(async (req, res) => {
   if (!title) return res.status(400).json({ error: 'Informe o nome do itinerário.' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return res.status(400).json({ error: 'Informe a data do itinerário.' });
   if (!locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local.' });
-  if (!(await ensureLocationsExist(locationIds)) || locationIds.some(id => !canAccessLocation(req, id))) return res.status(403).json({ error: 'Um ou mais locais não estão disponíveis para este usuário.' });
+  if (!(await ensureLocationsExist(locationIds))) return res.status(400).json({ error: 'Um ou mais locais não existem.' });
+  const responsible = await itineraryResponsible(req, req.body.responsible_user_id, locationIds);
   const withoutAddress = (await pool.query(`SELECT name FROM locations WHERE id=ANY($1::uuid[]) AND NULLIF(btrim(address),'') IS NULL`, [locationIds])).rows;
   if (withoutAddress.length) return res.status(400).json({ error: `Cadastre o endereço antes de incluir no itinerário: ${withoutAddress.map(row => row.name).join(', ')}.` });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const itinerary = (await client.query(
-      `INSERT INTO itineraries(title,service_date,created_by) VALUES($1,$2,$3) RETURNING *`,
-      [title, serviceDate, req.user.id]
+      `INSERT INTO itineraries(title,service_date,created_by,responsible_user_id) VALUES($1,$2,$3,$4) RETURNING *`,
+      [title, serviceDate, req.user.id, responsible.id]
     )).rows[0];
     for (let index = 0; index < locationIds.length; index += 1) {
       await client.query(`INSERT INTO itinerary_stops(itinerary_id,location_id,position) VALUES($1,$2,$3)`, [itinerary.id, locationIds[index], index + 1]);
@@ -880,7 +964,8 @@ app.post('/api/itineraries', asyncRoute(async (req, res) => {
 app.put('/api/itineraries/:id', asyncRoute(async (req, res) => {
   const existing = (await pool.query(`SELECT * FROM itineraries WHERE id=$1`, [req.params.id])).rows[0];
   if (!existing) return res.status(404).json({ error: 'Itinerário não encontrado.' });
-  if (!canAccessItinerary(req, existing.created_by)) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  if (!(await canAccessItinerary(req, existing.id))) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  if (req.user.role === ROLE_USER && String(existing.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Você pode alterar somente itinerários criados por você.' });
   const locked = (await pool.query(
     `SELECT EXISTS(
        SELECT 1 FROM itinerary_stops s
@@ -893,13 +978,14 @@ app.put('/api/itineraries/:id', asyncRoute(async (req, res) => {
   const serviceDate = String(req.body.service_date || '').trim();
   const locationIds = normalizeLocationIds(req.body.location_ids);
   if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate) || !locationIds.length) return res.status(400).json({ error: 'Informe o nome, a data e pelo menos um local.' });
-  if (!(await ensureLocationsExist(locationIds)) || locationIds.some(id => !canAccessLocation(req, id))) return res.status(403).json({ error: 'Um ou mais locais não estão disponíveis para este usuário.' });
+  if (!(await ensureLocationsExist(locationIds))) return res.status(400).json({ error: 'Um ou mais locais não existem.' });
+  const responsible = await itineraryResponsible(req, req.body.responsible_user_id || existing.responsible_user_id, locationIds);
   const withoutAddress = (await pool.query(`SELECT name FROM locations WHERE id=ANY($1::uuid[]) AND NULLIF(btrim(address),'') IS NULL`, [locationIds])).rows;
   if (withoutAddress.length) return res.status(400).json({ error: `Cadastre o endereço antes de incluir no itinerário: ${withoutAddress.map(row => row.name).join(', ')}.` });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`UPDATE itineraries SET title=$1,service_date=$2,updated_at=now() WHERE id=$3`, [title, serviceDate, existing.id]);
+    await client.query(`UPDATE itineraries SET title=$1,service_date=$2,responsible_user_id=$3,updated_at=now() WHERE id=$4`, [title, serviceDate, responsible.id, existing.id]);
     await client.query(`DELETE FROM itinerary_stops WHERE itinerary_id=$1`, [existing.id]);
     for (let index = 0; index < locationIds.length; index += 1) {
       await client.query(`INSERT INTO itinerary_stops(itinerary_id,location_id,position) VALUES($1,$2,$3)`, [existing.id, locationIds[index], index + 1]);
@@ -912,7 +998,8 @@ app.put('/api/itineraries/:id', asyncRoute(async (req, res) => {
 app.delete('/api/itineraries/:id', asyncRoute(async (req, res) => {
   const existing = (await pool.query(`SELECT * FROM itineraries WHERE id=$1`, [req.params.id])).rows[0];
   if (!existing) return res.status(404).json({ error: 'Itinerário não encontrado.' });
-  if (!canAccessItinerary(req, existing.created_by)) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  if (!(await canAccessItinerary(req, existing.id))) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  if (req.user.role === ROLE_USER && String(existing.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Você pode excluir somente itinerários criados por você.' });
   const locked = (await pool.query(
     `SELECT EXISTS(
        SELECT 1 FROM itinerary_stops s
@@ -929,11 +1016,11 @@ app.post('/api/itineraries/:id/stops/:stopId/no-service', asyncRoute(async (req,
   const notes = String(req.body.notes || '').trim();
   if (!notes) return res.status(400).json({ error: 'Informe por que o serviço não foi realizado.' });
   const stop = (await pool.query(
-    `SELECT s.*,i.created_by FROM itinerary_stops s JOIN itineraries i ON i.id=s.itinerary_id WHERE s.id=$1 AND i.id=$2`,
+    `SELECT s.*,i.id AS route_id FROM itinerary_stops s JOIN itineraries i ON i.id=s.itinerary_id WHERE s.id=$1 AND i.id=$2`,
     [req.params.stopId, req.params.id]
   )).rows[0];
   if (!stop) return res.status(404).json({ error: 'Parada não encontrada.' });
-  if (!canAccessItinerary(req, stop.created_by) || !canAccessLocation(req, stop.location_id)) return res.status(403).json({ error: 'Parada não disponível para este usuário.' });
+  if (!(await canAccessItinerary(req, stop.route_id)) || !canAccessLocation(req, stop.location_id)) return res.status(403).json({ error: 'Parada não disponível para este usuário.' });
   const startedService = (await pool.query(`SELECT 1 FROM maintenances WHERE itinerary_stop_id=$1 AND status='STARTED' LIMIT 1`, [stop.id])).rows[0];
   if (startedService) return res.status(409).json({ error: 'Existe um serviço em andamento nesta parada. Finalize o serviço para concluir a visita.' });
   const result = await pool.query(
@@ -1057,10 +1144,10 @@ app.post('/api/maintenances/start', upload.array('photos', 5), asyncRoute(async 
   const itineraryStopId = validUuid(req.body.itinerary_stop_id) ? String(req.body.itinerary_stop_id) : null;
   if (itineraryStopId) {
     const stop = (await pool.query(
-      `SELECT s.location_id,s.status,i.created_by FROM itinerary_stops s JOIN itineraries i ON i.id=s.itinerary_id WHERE s.id=$1`,
+      `SELECT s.location_id,s.status,i.id AS route_id FROM itinerary_stops s JOIN itineraries i ON i.id=s.itinerary_id WHERE s.id=$1`,
       [itineraryStopId]
     )).rows[0];
-    if (!stop || stop.status !== 'PENDING' || String(stop.location_id) !== String(selectedPool.location_id) || !canAccessItinerary(req, stop.created_by)) {
+    if (!stop || stop.status !== 'PENDING' || String(stop.location_id) !== String(selectedPool.location_id) || !(await canAccessItinerary(req, stop.route_id))) {
       return res.status(400).json({ error: 'A parada do itinerário não está disponível para esta piscina.' });
     }
   }
@@ -1112,7 +1199,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
         `SELECT s.id
          FROM itinerary_stops s
          JOIN itineraries i ON i.id=s.itinerary_id
-         WHERE s.location_id=$1 AND s.status='PENDING' AND i.created_by=$2
+         WHERE s.location_id=$1 AND s.status='PENDING' AND i.responsible_user_id=$2
            AND i.service_date=($3::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date
          ORDER BY i.created_at,s.position
          LIMIT 1`, [target.location_id, target.created_by, completedMaintenance.started_at]
