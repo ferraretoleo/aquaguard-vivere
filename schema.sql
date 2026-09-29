@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS locations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name varchar(180) NOT NULL,
   address text,
+  document_number varchar(20),
   report_emails text[] NOT NULL DEFAULT '{}',
   notification_contacts jsonb NOT NULL DEFAULT '[]'::jsonb,
   is_active boolean NOT NULL DEFAULT true,
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS locations (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS notification_contacts jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS document_number varchar(20);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS location_id uuid;
 DO $$

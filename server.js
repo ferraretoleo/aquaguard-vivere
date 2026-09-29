@@ -175,6 +175,14 @@ function notificationContacts(value) {
   })).filter(contact => contact.name && contact.phone);
 }
 
+function formatDocumentNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.length === 11) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  if (digits.length === 14) return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  return null;
+}
+
 function parseQuoteItems(value) {
   let items = value;
   if (typeof items === 'string') {
@@ -215,7 +223,7 @@ function buildMaintenanceText(m) {
 async function getMaintenance(id) {
   const result = await pool.query(
     `SELECT m.*, p.name AS pool_name, p.volume_liters, l.id AS location_id, l.name AS location_name,
-            l.address, l.report_emails,
+            l.address, l.document_number, l.report_emails,
             COALESCE((SELECT json_agg(json_build_object('id',mp.id,'phase',mp.phase,'file_name',mp.file_name))
                       FROM maintenance_photos mp WHERE mp.maintenance_id=m.id),'[]'::json) AS photos
      FROM maintenances m
@@ -280,19 +288,19 @@ function createQuotePdf(data) {
   doc.fontSize(10).fillColor('#6b7280').text(`Orçamento nº ${String(data.id).slice(0, 8).toUpperCase()}`, { align: 'center' });
   doc.moveDown(1.5);
 
-  doc.roundedRect(48, doc.y, 499, 82, 8).fillAndStroke('#f8fafc', '#e5e7eb');
-  const infoY = doc.y + 14;
+  const infoBoxY = doc.y;
+  doc.roundedRect(48, infoBoxY, 499, 118, 8).fillAndStroke('#f8fafc', '#e5e7eb');
+  const infoY = infoBoxY + 14;
   doc.fillColor('#111827').fontSize(11).text(`Local: ${data.location_name}`, 62, infoY, { width: 225 });
   doc.text(`Piscina: ${data.pool_name}`, 300, infoY, { width: 230 });
-  doc.text(`Data: ${dt(data.quote_created_at || data.ended_at)}`, 62, infoY + 25, { width: 225 });
-  doc.text(`Executante: ${data.executor}`, 300, infoY + 25, { width: 230 });
-  doc.y = infoY + 82;
+  doc.text(`Endereço: ${data.address || 'Não informado'}`, 62, infoY + 25, { width: 470 });
+  doc.text(`CNPJ/CPF: ${data.document_number || 'Não informado'}`, 62, infoY + 50, { width: 225 });
+  doc.text(`Data: ${dt(data.quote_created_at || data.ended_at)}`, 300, infoY + 50, { width: 230 });
+  doc.text(`Executante: ${data.executor}`, 62, infoY + 75, { width: 470 });
+  doc.y = infoBoxY + 132;
 
-  doc.fillColor('#991b1b').fontSize(13).text('Problema encontrado');
-  doc.fillColor('#374151').fontSize(11).text(data.problems_found || 'Não informado.');
-  doc.moveDown();
   doc.fillColor('#111827').fontSize(13).text('Descrição');
-  doc.fillColor('#374151').fontSize(11).text(data.notes || 'Não informada.');
+  doc.fillColor('#374151').fontSize(11).text(data.problems_found || 'Não informada.');
   doc.moveDown(1.2);
 
   let y = doc.y;
@@ -606,12 +614,15 @@ app.get('/api/locations', asyncRoute(async (_req, res) => {
 app.post('/api/locations', requireLocalManager, asyncRoute(async (req, res) => {
   const name = String(req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Informe o nome do local.' });
+  const documentInput = String(req.body.document_number || '').trim();
+  const documentNumber = formatDocumentNumber(documentInput);
+  if (documentInput && !documentNumber) return res.status(400).json({ error: 'Informe um CPF com 11 dígitos ou CNPJ com 14 dígitos.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO locations(name,address,report_emails,notification_contacts,is_active) VALUES($1,$2,$3,$4::jsonb,$5) RETURNING *`,
-      [name, String(req.body.address || '').trim() || null, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false]
+      `INSERT INTO locations(name,address,document_number,report_emails,notification_contacts,is_active) VALUES($1,$2,$3,$4,$5::jsonb,$6) RETURNING *`,
+      [name, String(req.body.address || '').trim() || null, documentNumber, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false]
     );
     if (req.user.role === ROLE_LOCAL_ADMIN) {
       await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [req.user.id, result.rows[0].id]);
@@ -628,9 +639,12 @@ app.post('/api/locations', requireLocalManager, asyncRoute(async (req, res) => {
 
 app.put('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res) => {
   if (!canAccessLocation(req, req.params.id)) return res.status(403).json({ error: 'Local não disponível para este usuário.' });
+  const documentInput = String(req.body.document_number || '').trim();
+  const documentNumber = formatDocumentNumber(documentInput);
+  if (documentInput && !documentNumber) return res.status(400).json({ error: 'Informe um CPF com 11 dígitos ou CNPJ com 14 dígitos.' });
   const result = await pool.query(
-    `UPDATE locations SET name=$1,address=$2,report_emails=$3,notification_contacts=$4::jsonb,is_active=$5,updated_at=now() WHERE id=$6 RETURNING *`,
-    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false, req.params.id]
+    `UPDATE locations SET name=$1,address=$2,document_number=$3,report_emails=$4,notification_contacts=$5::jsonb,is_active=$6,updated_at=now() WHERE id=$7 RETURNING *`,
+    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, documentNumber, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false, req.params.id]
   );
   res.json(result.rows[0]);
 }));
