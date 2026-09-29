@@ -174,6 +174,8 @@ A versão 1.5.0 divide a área principal do dashboard em duas colunas. O gráfic
 
 A versão 1.6.0 mantém no dashboard somente os itinerários que ainda possuem visitas pendentes. O histórico completo continua disponível no menu Itinerários. Esse menu passa a ter um relatório por período, com totais e a situação de cada local: serviço realizado, visitado sem serviço ou não visitado. O relatório pode ser impresso e permite abrir os detalhes da manutenção vinculada.
 
+A versão 1.7.0 adiciona o cadastro de Planos de pagamento para Administrador Geral e Administrador Local. O plano registra nome, tipo e os serviços contemplados, sem valores. No cadastro de cada Local é possível associar um plano e informar o valor total do contrato, a forma de pagamento e a condição mensal ou parcelada. Os valores permanecem independentes por Local.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.

@@ -36,6 +36,7 @@ function asyncRoute(fn) {
 const ROLE_ADMIN = 'ADMIN';
 const ROLE_LOCAL_ADMIN = 'LOCAL_ADMIN';
 const ROLE_USER = 'USER';
+const PAYMENT_METHODS = ['PIX','BOLETO','TRANSFERENCIA','CARTAO','DINHEIRO','DEBITO_AUTOMATICO','OUTRO'];
 
 function publicUser(row) {
   const locationIds = Array.isArray(row.location_ids)
@@ -185,6 +186,43 @@ function formatDocumentNumber(value) {
   if (digits.length === 11) return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
   if (digits.length === 14) return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
   return null;
+}
+
+function contractNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+}
+
+function locationContract(body) {
+  const rawPlanId = String(body.payment_plan_id || '').trim();
+  const paymentPlanId = validUuid(rawPlanId) ? rawPlanId : null;
+  if (rawPlanId && !paymentPlanId) { const error = new Error('Selecione um plano de pagamento válido.'); error.status = 400; throw error; }
+  if (!paymentPlanId) return { paymentPlanId: null, contractValue: null, paymentMethod: null, paymentType: null, monthlyAmount: null, installmentCount: null, installmentAmount: null };
+  const contractValue = contractNumber(body.contract_value);
+  const paymentMethod = PAYMENT_METHODS.includes(body.payment_method) ? body.payment_method : null;
+  const paymentType = ['MONTHLY','INSTALLMENTS'].includes(body.payment_type) ? body.payment_type : null;
+  const monthlyAmount = paymentType === 'MONTHLY' ? contractNumber(body.monthly_amount) : null;
+  const installmentCount = paymentType === 'INSTALLMENTS' ? Number.parseInt(body.installment_count, 10) : null;
+  const installmentAmount = paymentType === 'INSTALLMENTS' ? contractNumber(body.installment_amount) : null;
+  if (!(contractValue > 0) || !paymentMethod || !paymentType) { const error = new Error('Informe o valor do contrato, a forma e o tipo de pagamento.'); error.status = 400; throw error; }
+  if (paymentType === 'MONTHLY' && !(monthlyAmount > 0)) { const error = new Error('Informe o valor mensal do contrato.'); error.status = 400; throw error; }
+  if (paymentType === 'INSTALLMENTS' && (!(installmentCount > 0) || !(installmentAmount > 0))) { const error = new Error('Informe a quantidade e o valor das parcelas.'); error.status = 400; throw error; }
+  return { paymentPlanId, contractValue, paymentMethod, paymentType, monthlyAmount, installmentCount, installmentAmount };
+}
+
+async function canUsePaymentPlan(req, paymentPlanId) {
+  if (!paymentPlanId) return true;
+  if (isGlobalAdmin(req.user)) return Boolean((await pool.query(`SELECT 1 FROM payment_plans WHERE id=$1`, [paymentPlanId])).rows[0]);
+  const result = await pool.query(
+    `SELECT 1 FROM payment_plans pp
+     WHERE pp.id=$1 AND (
+       pp.created_by=$2 OR EXISTS(
+         SELECT 1 FROM locations l WHERE l.payment_plan_id=pp.id AND l.id=ANY($3::uuid[])
+       )
+     )`, [paymentPlanId, req.user.id, req.user.location_ids || []]
+  );
+  return Boolean(result.rows[0]);
 }
 
 function parseQuoteItems(value) {
@@ -608,10 +646,72 @@ app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   }
 }));
 
+app.get('/api/payment-plans', requireLocalManager, asyncRoute(async (req, res) => {
+  const result = isGlobalAdmin(req.user)
+    ? await pool.query(
+      `SELECT pp.*,u.name AS created_by_name,count(l.id)::int AS locations_count
+       FROM payment_plans pp JOIN users u ON u.id=pp.created_by
+       LEFT JOIN locations l ON l.payment_plan_id=pp.id
+       GROUP BY pp.id,u.name ORDER BY pp.name`
+    )
+    : await pool.query(
+      `SELECT pp.*,u.name AS created_by_name,count(DISTINCT l.id)::int AS locations_count
+       FROM payment_plans pp JOIN users u ON u.id=pp.created_by
+       LEFT JOIN locations l ON l.payment_plan_id=pp.id
+       WHERE pp.created_by=$1 OR l.id=ANY($2::uuid[])
+       GROUP BY pp.id,u.name ORDER BY pp.name`, [req.user.id, req.user.location_ids || []]
+    );
+  res.json(result.rows);
+}));
+
+app.post('/api/payment-plans', requireLocalManager, asyncRoute(async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const planType = String(req.body.plan_type || '').trim();
+  const includedServices = String(req.body.included_services || '').trim();
+  if (!name || !planType || !includedServices) return res.status(400).json({ error: 'Informe o nome, o tipo e o que o plano contempla.' });
+  const result = await pool.query(
+    `INSERT INTO payment_plans(name,plan_type,included_services,created_by,is_active) VALUES($1,$2,$3,$4,$5) RETURNING *`,
+    [name, planType, includedServices, req.user.id, req.body.is_active !== false]
+  );
+  res.status(201).json(result.rows[0]);
+}));
+
+app.put('/api/payment-plans/:id', requireLocalManager, asyncRoute(async (req, res) => {
+  const existing = (await pool.query(`SELECT * FROM payment_plans WHERE id=$1`, [req.params.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: 'Plano de pagamento não encontrado.' });
+  if (!isGlobalAdmin(req.user) && String(existing.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Somente o criador do plano ou o administrador geral pode alterá-lo.' });
+  const name = String(req.body.name || '').trim();
+  const planType = String(req.body.plan_type || '').trim();
+  const includedServices = String(req.body.included_services || '').trim();
+  if (!name || !planType || !includedServices) return res.status(400).json({ error: 'Informe o nome, o tipo e o que o plano contempla.' });
+  const result = await pool.query(
+    `UPDATE payment_plans SET name=$1,plan_type=$2,included_services=$3,is_active=$4,updated_at=now() WHERE id=$5 RETURNING *`,
+    [name, planType, includedServices, req.body.is_active !== false, existing.id]
+  );
+  res.json(result.rows[0]);
+}));
+
+app.delete('/api/payment-plans/:id', requireLocalManager, asyncRoute(async (req, res) => {
+  const existing = (await pool.query(`SELECT * FROM payment_plans WHERE id=$1`, [req.params.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: 'Plano de pagamento não encontrado.' });
+  if (!isGlobalAdmin(req.user) && String(existing.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Somente o criador do plano ou o administrador geral pode desativá-lo.' });
+  await pool.query(`UPDATE payment_plans SET is_active=false,updated_at=now() WHERE id=$1`, [existing.id]);
+  res.json({ ok: true });
+}));
+
 app.get('/api/locations', asyncRoute(async (_req, res) => {
-  const result = isGlobalAdmin(_req.user)
-    ? await pool.query(`SELECT * FROM locations ORDER BY name`)
-    : await pool.query(`SELECT * FROM locations WHERE id=ANY($1::uuid[]) ORDER BY name`, [_req.user.location_ids]);
+  let result;
+  if (canManageLocalData(_req.user)) {
+    const where = isGlobalAdmin(_req.user) ? '' : `WHERE l.id=ANY($1::uuid[])`;
+    const params = isGlobalAdmin(_req.user) ? [] : [_req.user.location_ids || []];
+    result = await pool.query(
+      `SELECT l.*,pp.name AS payment_plan_name,pp.plan_type AS payment_plan_type,pp.included_services AS payment_plan_services
+       FROM locations l LEFT JOIN payment_plans pp ON pp.id=l.payment_plan_id
+       ${where} ORDER BY l.name`, params
+    );
+  } else {
+    result = await pool.query(`SELECT id,name,address,is_active FROM locations WHERE id=ANY($1::uuid[]) ORDER BY name`, [_req.user.location_ids || []]);
+  }
   res.json(result.rows);
 }));
 
@@ -621,12 +721,15 @@ app.post('/api/locations', requireLocalManager, asyncRoute(async (req, res) => {
   const documentInput = String(req.body.document_number || '').trim();
   const documentNumber = formatDocumentNumber(documentInput);
   if (documentInput && !documentNumber) return res.status(400).json({ error: 'Informe um CPF com 11 dígitos ou CNPJ com 14 dígitos.' });
+  const contract = locationContract(req.body);
+  if (!(await canUsePaymentPlan(req, contract.paymentPlanId))) return res.status(403).json({ error: 'Plano de pagamento não disponível para este usuário.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO locations(name,address,document_number,report_emails,notification_contacts,is_active) VALUES($1,$2,$3,$4,$5::jsonb,$6) RETURNING *`,
-      [name, String(req.body.address || '').trim() || null, documentNumber, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false]
+      `INSERT INTO locations(name,address,document_number,payment_plan_id,contract_value,payment_method,payment_type,monthly_amount,installment_count,installment_amount,report_emails,notification_contacts,is_active)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13) RETURNING *`,
+      [name, String(req.body.address || '').trim() || null, documentNumber, contract.paymentPlanId, contract.contractValue, contract.paymentMethod, contract.paymentType, contract.monthlyAmount, contract.installmentCount, contract.installmentAmount, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false]
     );
     if (req.user.role === ROLE_LOCAL_ADMIN) {
       await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [req.user.id, result.rows[0].id]);
@@ -646,9 +749,11 @@ app.put('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res) =
   const documentInput = String(req.body.document_number || '').trim();
   const documentNumber = formatDocumentNumber(documentInput);
   if (documentInput && !documentNumber) return res.status(400).json({ error: 'Informe um CPF com 11 dígitos ou CNPJ com 14 dígitos.' });
+  const contract = locationContract(req.body);
+  if (!(await canUsePaymentPlan(req, contract.paymentPlanId))) return res.status(403).json({ error: 'Plano de pagamento não disponível para este usuário.' });
   const result = await pool.query(
-    `UPDATE locations SET name=$1,address=$2,document_number=$3,report_emails=$4,notification_contacts=$5::jsonb,is_active=$6,updated_at=now() WHERE id=$7 RETURNING *`,
-    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, documentNumber, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false, req.params.id]
+    `UPDATE locations SET name=$1,address=$2,document_number=$3,payment_plan_id=$4,contract_value=$5,payment_method=$6,payment_type=$7,monthly_amount=$8,installment_count=$9,installment_amount=$10,report_emails=$11,notification_contacts=$12::jsonb,is_active=$13,updated_at=now() WHERE id=$14 RETURNING *`,
+    [String(req.body.name || '').trim(), String(req.body.address || '').trim() || null, documentNumber, contract.paymentPlanId, contract.contractValue, contract.paymentMethod, contract.paymentType, contract.monthlyAmount, contract.installmentCount, contract.installmentAmount, emailList(req.body.report_emails), JSON.stringify(notificationContacts(req.body.notification_contacts)), req.body.is_active !== false, req.params.id]
   );
   res.json(result.rows[0]);
 }));
