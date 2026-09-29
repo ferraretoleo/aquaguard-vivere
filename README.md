@@ -172,6 +172,8 @@ A versão 1.4.1 corrige a finalização de serviços iniciados pelo itinerário.
 
 A versão 1.5.0 divide a área principal do dashboard em duas colunas. O gráfico de evolução química permanece à esquerda e os itinerários de hoje e dos próximos dias aparecem à direita, com situação, progresso das visitas e acesso aos detalhes. Cada usuário visualiza seus próprios itinerários; o administrador geral visualiza os itinerários de todos os usuários. Também é possível criar um itinerário futuro diretamente pelo dashboard.
 
+A versão 1.6.0 mantém no dashboard somente os itinerários que ainda possuem visitas pendentes. O histórico completo continua disponível no menu Itinerários. Esse menu passa a ter um relatório por período, com totais e a situação de cada local: serviço realizado, visitado sem serviço ou não visitado. O relatório pode ser impresso e permite abrir os detalhes da manutenção vinculada.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.

@@ -89,7 +89,7 @@ async function renderRoute() {
     if (route==='startservice') await renderService();
     if (route==='pools') await renderPools();
     if (route==='locations') await renderLocations();
-    if (route==='itineraries') await renderItineraries();
+    if (route==='itineraries') new URLSearchParams(location.search).get('view')==='report' ? await renderItineraryReport() : await renderItineraries();
     if (route==='reports') await renderReports();
   } catch (error) { main.innerHTML=`<div class="page"><div class="empty">${esc(error.message)}</div></div>`; toast(error.message,true); }
 }
@@ -125,7 +125,7 @@ function stabilizerStatus(value){
 
 async function renderDashboard(poolId='') {
   const query=new URLSearchParams(); if(state.locationId)query.set('location_id',state.locationId); if(poolId)query.set('pool_id',poolId);
-  const [dashboard,itineraries]=await Promise.all([api(`/api/dashboard?${query}`),api(`/api/itineraries?date_from=${brazilInputDate()}&limit=6`)]);
+  const [dashboard,itineraries]=await Promise.all([api(`/api/dashboard?${query}`),api(`/api/itineraries?date_from=${brazilInputDate()}&only_open=true&limit=6`)]);
   state.dashboard=dashboard;
   const d=state.dashboard, location=state.locations.find(x=>x.id===state.locationId);
   $('#mainContent').innerHTML=`<div class="page">
@@ -315,8 +315,9 @@ function itineraryCard(item){const status=itineraryStatus(item);return `<article
 async function renderItineraries(){
   const queryDate=new URLSearchParams(location.search).get('service_date')||brazilInputDate();
   const itineraries=await api(`/api/itineraries?service_date=${encodeURIComponent(queryDate)}`);
-  $('#mainContent').innerHTML=`<div class="page"><div class="page-head"><div><h1>Itinerários</h1><p>Organize a sequência de visitas aos locais</p></div><button id="newItinerary" class="btn primary">＋ Novo itinerário</button></div><div class="panel itinerary-filter"><div class="field"><span>Data das visitas</span><input id="itineraryDate" type="date" value="${esc(queryDate)}"></div><button id="filterItinerary" class="btn outline">Filtrar</button></div><div class="cards-list itinerary-list">${itineraries.map(itineraryCard).join('')||'<div class="panel empty">Nenhum itinerário encontrado nesta data.</div>'}</div></div>`;
+  $('#mainContent').innerHTML=`<div class="page"><div class="page-head"><div><h1>Itinerários</h1><p>Organize a sequência de visitas aos locais</p></div><div class="page-head-actions"><button id="itineraryReport" class="btn outline">▤ Relatório</button><button id="newItinerary" class="btn primary">＋ Novo itinerário</button></div></div><div class="panel itinerary-filter"><div class="field"><span>Data das visitas</span><input id="itineraryDate" type="date" value="${esc(queryDate)}"></div><button id="filterItinerary" class="btn outline">Filtrar</button></div><div class="cards-list itinerary-list">${itineraries.map(itineraryCard).join('')||'<div class="panel empty">Nenhum itinerário encontrado nesta data.</div>'}</div></div>`;
   $('#newItinerary').onclick=()=>itineraryFormModal();
+  $('#itineraryReport').onclick=()=>itineraryReportModal();
   $('#filterItinerary').onclick=()=>go(`/itineraries?service_date=${encodeURIComponent($('#itineraryDate').value)}`);
   $$('[data-open-itinerary]').forEach(button=>button.onclick=()=>openItinerary(button.dataset.openItinerary));
   $$('[data-edit-itinerary]').forEach(button=>button.onclick=async()=>itineraryFormModal(await api(`/api/itineraries/${button.dataset.editItinerary}`)));
@@ -372,6 +373,30 @@ function noServiceModal(itineraryId,stopId){
 }
 
 async function deleteItinerary(id){if(!confirm('Deseja excluir este itinerário?'))return;try{await api(`/api/itineraries/${id}`,{method:'DELETE'});toast('Itinerário excluído.');renderItineraries();}catch(error){toast(error.message,true);}}
+
+function itineraryReportModal(){
+  const today=brazilInputDate(),monthStart=`${today.slice(0,8)}01`;
+  openModal('Relatório de itinerários',`<form id="itineraryReportForm"><div class="form-grid"><div class="field"><span>Data inicial *</span><input name="date_from" type="date" value="${monthStart}" required></div><div class="field"><span>Data final *</span><input name="date_to" type="date" value="${today}" required></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">Gerar relatório</button></div></form>`);
+  $('#itineraryReportForm').onsubmit=event=>{event.preventDefault();const values=Object.fromEntries(new FormData(event.currentTarget));if(values.date_from>values.date_to){toast('A data inicial não pode ser maior que a data final.',true);return;}closeModal();go(`/itineraries?view=report&date_from=${encodeURIComponent(values.date_from)}&date_to=${encodeURIComponent(values.date_to)}`);};
+}
+
+function itineraryReportStatus(row){if(row.status==='VISITED_SERVICE')return '<span class="badge">Realizado</span>';if(row.status==='VISITED_NO_SERVICE')return '<span class="badge warning">Sem serviço</span>';return '<span class="badge off">Não visitado</span>';}
+
+function itineraryReportRows(rows){
+  if(!rows.length)return '<div class="empty">Nenhum itinerário encontrado no período informado.</div>';
+  return `<div class="report-table-wrap"><table class="report-table itinerary-report-table"><thead><tr><th>Data</th><th>Itinerário</th><th>Responsável</th><th>Ordem</th><th>Local</th><th>Visita</th><th>Serviço feito</th><th>Piscina</th><th>Data da visita</th><th>Observação</th><th class="no-print"></th></tr></thead><tbody>${rows.map(row=>`<tr><td>${dateOnlyBr(row.service_date)}</td><td>${esc(row.title)}</td><td>${esc(row.responsible_name)}</td><td>${row.position}</td><td>${esc(row.location_name)}</td><td>${itineraryReportStatus(row)}</td><td><strong class="${row.status==='VISITED_SERVICE'?'report-yes':'report-no'}">${row.status==='VISITED_SERVICE'?'Sim':'Não'}</strong></td><td>${esc(row.pool_name||'-')}</td><td>${row.visited_at?brDate(row.visited_at):'-'}</td><td class="report-observation">${esc(row.visit_notes||'-')}</td><td class="no-print">${row.maintenance_id?`<button class="btn outline itinerary-report-detail" data-id="${row.maintenance_id}">Detalhes</button>`:''}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+async function renderItineraryReport(){
+  const query=new URLSearchParams(location.search),today=brazilInputDate();
+  const dateFrom=query.get('date_from')||`${today.slice(0,8)}01`,dateTo=query.get('date_to')||today;
+  const report=await api(`/api/reports/itineraries?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
+  $('#mainContent').innerHTML=`<div class="page itinerary-report-page"><div class="page-head"><div><button class="btn outline back-button no-print" data-go="/itineraries">← Voltar aos itinerários</button><h1>Relatório de itinerários</h1><p>Período: ${dateOnlyBr(dateFrom)} a ${dateOnlyBr(dateTo)}</p></div><div class="page-head-actions no-print"><button id="changeItineraryReport" class="btn outline">Alterar período</button><button id="printItineraryReport" class="btn primary">🖨 Imprimir</button></div></div><section class="stats itinerary-report-stats"><div class="stat-card"><span>Visitas previstas</span><strong>${report.summary.total}</strong></div><div class="stat-card"><span>Serviços realizados</span><strong>${report.summary.services}</strong></div><div class="stat-card"><span>Visitados sem serviço</span><strong>${report.summary.no_service}</strong></div><div class="stat-card"><span>Não visitados</span><strong>${report.summary.pending}</strong></div></section><section class="panel report-results">${itineraryReportRows(report.rows)}</section></div>`;
+  bindRoutes();
+  $('#changeItineraryReport').onclick=()=>itineraryReportModal();
+  $('#printItineraryReport').onclick=()=>window.print();
+  $$('.itinerary-report-detail').forEach(button=>button.onclick=()=>openMaintenance(button.dataset.id));
+}
 
 function brazilInputDate(value=new Date()){
   const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(value);

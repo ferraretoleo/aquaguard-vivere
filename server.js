@@ -662,6 +662,7 @@ app.delete('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res
 app.get('/api/itineraries', asyncRoute(async (req, res) => {
   const serviceDate = String(req.query.service_date || '').trim();
   const dateFrom = String(req.query.date_from || '').trim();
+  const onlyOpen = String(req.query.only_open || '').toLowerCase() === 'true';
   if (serviceDate && !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return res.status(400).json({ error: 'Data do itinerário inválida.' });
   if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) return res.status(400).json({ error: 'Data inicial do itinerário inválida.' });
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 200, 1), 200);
@@ -671,6 +672,7 @@ app.get('/api/itineraries', asyncRoute(async (req, res) => {
   if (serviceDate) { params.push(serviceDate); conditions.push(`i.service_date=$${params.length}::date`); }
   if (dateFrom) { params.push(dateFrom); conditions.push(`i.service_date>=$${params.length}::date`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const having = onlyOpen ? `HAVING count(s.id) FILTER (WHERE s.status='PENDING') > 0` : '';
   params.push(limit);
   const result = await pool.query(
     `SELECT i.*,u.name AS created_by_name,
@@ -683,10 +685,46 @@ app.get('/api/itineraries', asyncRoute(async (req, res) => {
      LEFT JOIN itinerary_stops s ON s.itinerary_id=i.id
      ${where}
      GROUP BY i.id,u.name
+     ${having}
      ORDER BY i.service_date ${dateFrom?'ASC':'DESC'},i.created_at DESC
      LIMIT $${params.length}`, params
   );
   res.json(result.rows);
+}));
+
+app.get('/api/reports/itineraries', asyncRoute(async (req, res) => {
+  const dateFrom = String(req.query.date_from || '').trim();
+  const dateTo = String(req.query.date_to || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+    return res.status(400).json({ error: 'Informe o período inicial e final do relatório.' });
+  }
+  if (dateFrom > dateTo) return res.status(400).json({ error: 'A data inicial não pode ser maior que a data final.' });
+  const params = [dateFrom, dateTo];
+  const conditions = [`i.service_date BETWEEN $1::date AND $2::date`];
+  if (!isGlobalAdmin(req.user)) { params.push(req.user.id); conditions.push(`i.created_by=$${params.length}`); }
+  const rows = (await pool.query(
+    `SELECT i.id AS itinerary_id,i.title,i.service_date,u.name AS responsible_name,
+            s.id AS stop_id,s.position,s.status,s.visit_notes,s.visited_at,
+            l.id AS location_id,l.name AS location_name,l.address,
+            m.id AS maintenance_id,m.started_at,m.ended_at,p.name AS pool_name
+     FROM itineraries i
+     JOIN users u ON u.id=i.created_by
+     JOIN itinerary_stops s ON s.itinerary_id=i.id
+     JOIN locations l ON l.id=s.location_id
+     LEFT JOIN maintenances m ON m.id=s.maintenance_id
+     LEFT JOIN pools p ON p.id=m.pool_id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY i.service_date,i.created_at,s.position`, params
+  )).rows;
+  res.json({
+    summary: {
+      total: rows.length,
+      services: rows.filter(row => row.status === 'VISITED_SERVICE').length,
+      no_service: rows.filter(row => row.status === 'VISITED_NO_SERVICE').length,
+      pending: rows.filter(row => row.status === 'PENDING').length
+    },
+    rows
+  });
 }));
 
 app.get('/api/itineraries/:id', asyncRoute(async (req, res) => {
