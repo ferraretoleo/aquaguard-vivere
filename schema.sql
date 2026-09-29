@@ -79,12 +79,14 @@ CREATE TABLE IF NOT EXISTS maintenances (
   alkalinity numeric(7,2),
   stabilizer numeric(7,2),
   services text[] NOT NULL DEFAULT '{}',
+  problems_found text,
   notes text,
   created_by uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE maintenances ADD COLUMN IF NOT EXISTS stabilizer numeric(7,2);
+ALTER TABLE maintenances ADD COLUMN IF NOT EXISTS problems_found text;
 CREATE INDEX IF NOT EXISTS ix_maintenances_pool_started ON maintenances(pool_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS ix_maintenances_status ON maintenances(status);
 

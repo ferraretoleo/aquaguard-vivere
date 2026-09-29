@@ -190,6 +190,7 @@ function buildMaintenanceText(m) {
     `*Estabilizador (CYA):* ${m.stabilizer ?? '-'} ppm`,
     '',
     `*Serviços:* ${(m.services || []).join(', ') || '-'}`,
+    m.problems_found ? `*Problemas encontrados:* ${m.problems_found}` : '',
     m.notes ? `*Observações:* ${m.notes}` : ''
   ].filter(Boolean).join('\n');
 }
@@ -233,6 +234,11 @@ function createReportPdf(data, title = 'Relatório de Manutenção') {
   doc.moveDown();
   doc.fontSize(14).fillColor('#111827').text('Serviços executados');
   doc.fontSize(11).fillColor('#374151').text((data.services || []).map(s => `• ${s}`).join('\n') || 'Nenhum serviço informado.');
+  if (data.problems_found) {
+    doc.moveDown();
+    doc.fontSize(14).fillColor('#991b1b').text('Problemas encontrados');
+    doc.fontSize(11).fillColor('#374151').text(data.problems_found);
+  }
   if (data.notes) {
     doc.moveDown();
     doc.fontSize(14).fillColor('#111827').text('Observações');
@@ -361,7 +367,7 @@ function escapeHtml(value) {
 function maintenanceEmailHtml(data) {
   const dt = value => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(value)) : '-';
   const services = (data.services || []).map(service => `<li style="margin:0 0 6px">${escapeHtml(service)}</li>`).join('') || '<li>Nenhum serviço informado</li>';
-  return `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f7fb;font-family:Arial,sans-serif;color:#172033"><div style="max-width:680px;margin:0 auto;padding:24px"><div style="background:#0f766e;color:white;border-radius:14px 14px 0 0;padding:22px 26px"><div style="font-size:13px;opacity:.85">AquaGuard</div><h1 style="font-size:22px;margin:5px 0 0">Manutenção realizada</h1></div><div style="background:white;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 14px 14px;padding:26px"><p style="margin-top:0">A manutenção da piscina foi concluída com sucesso.</p><table style="width:100%;border-collapse:collapse;margin:18px 0"><tr><td style="padding:9px;background:#f8fafc"><strong>Local</strong><br>${escapeHtml(data.location_name)}</td><td style="padding:9px;background:#f8fafc"><strong>Piscina</strong><br>${escapeHtml(data.pool_name)}</td></tr><tr><td style="padding:9px"><strong>Executante</strong><br>${escapeHtml(data.executor)}</td><td style="padding:9px"><strong>Período</strong><br>${escapeHtml(dt(data.started_at))} a ${escapeHtml(dt(data.ended_at))}</td></tr></table><h2 style="font-size:17px;color:#0f766e">Medições químicas</h2><table style="width:100%;border-collapse:collapse;text-align:center"><tr><td style="padding:10px;border:1px solid #e5e7eb"><strong>pH</strong><br>${escapeHtml(data.ph ?? '-')}</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Cloro livre</strong><br>${escapeHtml(data.chlorine ?? '-')} ppm</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Alcalinidade</strong><br>${escapeHtml(data.alkalinity ?? '-')} ppm</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Estabilizador</strong><br>${escapeHtml(data.stabilizer ?? '-')} ppm</td></tr></table><h2 style="font-size:17px;color:#0f766e;margin-top:24px">Serviços executados</h2><ul style="padding-left:20px">${services}</ul>${data.notes ? `<h2 style="font-size:17px;color:#0f766e;margin-top:24px">Observações</h2><p>${escapeHtml(data.notes)}</p>` : ''}<p style="font-size:12px;color:#64748b;margin:28px 0 0">Mensagem enviada automaticamente pelo AquaGuard.</p></div></div></body></html>`;
+  return `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f7fb;font-family:Arial,sans-serif;color:#172033"><div style="max-width:680px;margin:0 auto;padding:24px"><div style="background:#0f766e;color:white;border-radius:14px 14px 0 0;padding:22px 26px"><div style="font-size:13px;opacity:.85">AquaGuard</div><h1 style="font-size:22px;margin:5px 0 0">Manutenção realizada</h1></div><div style="background:white;border:1px solid #e5e7eb;border-top:0;border-radius:0 0 14px 14px;padding:26px"><p style="margin-top:0">A manutenção da piscina foi concluída com sucesso.</p><table style="width:100%;border-collapse:collapse;margin:18px 0"><tr><td style="padding:9px;background:#f8fafc"><strong>Local</strong><br>${escapeHtml(data.location_name)}</td><td style="padding:9px;background:#f8fafc"><strong>Piscina</strong><br>${escapeHtml(data.pool_name)}</td></tr><tr><td style="padding:9px"><strong>Executante</strong><br>${escapeHtml(data.executor)}</td><td style="padding:9px"><strong>Período</strong><br>${escapeHtml(dt(data.started_at))} a ${escapeHtml(dt(data.ended_at))}</td></tr></table><h2 style="font-size:17px;color:#0f766e">Medições químicas</h2><table style="width:100%;border-collapse:collapse;text-align:center"><tr><td style="padding:10px;border:1px solid #e5e7eb"><strong>pH</strong><br>${escapeHtml(data.ph ?? '-')}</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Cloro livre</strong><br>${escapeHtml(data.chlorine ?? '-')} ppm</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Alcalinidade</strong><br>${escapeHtml(data.alkalinity ?? '-')} ppm</td><td style="padding:10px;border:1px solid #e5e7eb"><strong>Estabilizador</strong><br>${escapeHtml(data.stabilizer ?? '-')} ppm</td></tr></table><h2 style="font-size:17px;color:#0f766e;margin-top:24px">Serviços executados</h2><ul style="padding-left:20px">${services}</ul>${data.problems_found ? `<h2 style="font-size:17px;color:#991b1b;margin-top:24px">Problemas encontrados</h2><p>${escapeHtml(data.problems_found)}</p>` : ''}${data.notes ? `<h2 style="font-size:17px;color:#0f766e;margin-top:24px">Observações</h2><p>${escapeHtml(data.notes)}</p>` : ''}<p style="font-size:12px;color:#64748b;margin:28px 0 0">Mensagem enviada automaticamente pelo AquaGuard.</p></div></div></body></html>`;
 }
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -611,14 +617,15 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const poolParams = [];
   const poolScope = locationScope(req, req.query.location_id, 'p.location_id', poolParams);
   const activePoolsWhere = [`p.is_active=true`, ...(poolScope ? [poolScope] : [])].join(' AND ');
-  const [activePools, today, total, history, trends] = await Promise.all([
+  const [activePools, today, total, history, problems, trends] = await Promise.all([
     pool.query(`SELECT count(*)::int AS count FROM pools p WHERE ${activePoolsWhere}`, poolParams),
     pool.query(`SELECT count(*)::int AS count FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where} AND (m.started_at AT TIME ZONE 'America/Sao_Paulo')::date=(now() AT TIME ZONE 'America/Sao_Paulo')::date`, params),
     pool.query(`SELECT count(*)::int AS count FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where}`, params),
-    pool.query(`SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.notes,p.name AS pool_name,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE ${where} ORDER BY m.started_at DESC LIMIT 100`, params),
+    pool.query(`SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.problems_found,m.notes,p.name AS pool_name,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE ${where} ORDER BY m.started_at DESC LIMIT 100`, params),
+    pool.query(`SELECT m.id,m.executor,m.started_at,m.ended_at,m.problems_found,p.name AS pool_name,l.name AS location_name FROM maintenances m JOIN pools p ON p.id=m.pool_id JOIN locations l ON l.id=p.location_id WHERE ${where} AND NULLIF(btrim(m.problems_found),'') IS NOT NULL ORDER BY m.started_at DESC LIMIT 100`, params),
     pool.query(`SELECT m.id,m.started_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,p.name AS pool_name FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE ${where} ORDER BY m.started_at ASC LIMIT 100`, params)
   ]);
-  res.json({ stats: { activePools: activePools.rows[0].count, today: today.rows[0].count, total: total.rows[0].count }, history: history.rows, trends: trends.rows });
+  res.json({ stats: { activePools: activePools.rows[0].count, today: today.rows[0].count, total: total.rows[0].count }, history: history.rows, problems: problems.rows, trends: trends.rows });
 }));
 
 app.get('/api/reports/maintenances', asyncRoute(async (req, res) => {
@@ -637,7 +644,7 @@ app.get('/api/reports/maintenances', asyncRoute(async (req, res) => {
   if (dateFrom) { params.push(dateFrom); conditions.push(`(m.started_at AT TIME ZONE 'America/Sao_Paulo')::date >= $${params.length}::date`); }
   if (dateTo) { params.push(dateTo); conditions.push(`(m.started_at AT TIME ZONE 'America/Sao_Paulo')::date <= $${params.length}::date`); }
   const rows = (await pool.query(
-    `SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.notes,
+    `SELECT m.id,m.executor,m.started_at,m.ended_at,m.ph,m.chlorine,m.alkalinity,m.stabilizer,m.services,m.problems_found,m.notes,
             p.id AS pool_id,p.name AS pool_name,l.id AS location_id,l.name AS location_name
      FROM maintenances m
      JOIN pools p ON p.id=m.pool_id
@@ -692,8 +699,8 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `UPDATE maintenances SET status='COMPLETED',ended_at=now(),ph=$1,chlorine=$2,alkalinity=$3,stabilizer=$4,services=$5,notes=$6,updated_at=now() WHERE id=$7 AND status='STARTED' RETURNING *`,
-      [req.body.ph, req.body.chlorine, req.body.alkalinity, req.body.stabilizer, services, String(req.body.notes || '').trim() || null, req.params.id]
+      `UPDATE maintenances SET status='COMPLETED',ended_at=now(),ph=$1,chlorine=$2,alkalinity=$3,stabilizer=$4,services=$5,problems_found=$6,notes=$7,updated_at=now() WHERE id=$8 AND status='STARTED' RETURNING *`,
+      [req.body.ph, req.body.chlorine, req.body.alkalinity, req.body.stabilizer, services, String(req.body.problems_found || '').trim() || null, String(req.body.notes || '').trim() || null, req.params.id]
     );
     if (!result.rows[0]) {
       await client.query('ROLLBACK');

@@ -156,6 +156,8 @@ Cada local também pode armazenar vários contatos para futuros alertas e relat�
 
 Nos relatórios, o total de serviços executados representa a quantidade de manutenções concluídas dentro dos filtros de local, piscina e período. Os procedimentos marcados em cada manutenção continuam aparecendo separadamente como itens executados.
 
+Ao finalizar um serviço, o campo opcional `Problemas encontrados` permite registrar falhas, danos ou situações identificadas na piscina. O dashboard mostra esses registros em uma coluna própria, do mais recente para o mais antigo, respeitando o local e a piscina selecionados. O gráfico de evolução química ocupa toda a largura disponível no dashboard.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
