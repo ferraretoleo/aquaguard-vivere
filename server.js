@@ -955,6 +955,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Este serviço já foi encerrado ou não existe.' });
     }
+    completedMaintenance = result.rows[0];
     for (const file of req.files || []) await client.query(`INSERT INTO maintenance_photos(maintenance_id,phase,file_name,mime_type,file_data) VALUES($1,'END',$2,$3,$4)`, [req.params.id, file.originalname, file.mimetype, file.buffer]);
     let itineraryStopId = target.itinerary_stop_id;
     if (!itineraryStopId) {
@@ -976,7 +977,6 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
       );
     }
     await client.query('COMMIT');
-    completedMaintenance = result.rows[0];
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 
   res.json({ ...completedMaintenance, quote_url: quoteTotal !== null ? `/api/maintenances/${completedMaintenance.id}/quote.pdf` : null });

@@ -168,6 +168,8 @@ A versão 1.4.0 adiciona o menu Itinerário para todos os perfis. Cada usuário 
 
 O arquivo `migrar_itinerarios.sql` permite aplicar manualmente as tabelas no Neon. Em um deploy normal, o `schema.sql` faz essa atualização automaticamente na inicialização do Render.
 
+A versão 1.4.1 corrige a finalização de serviços iniciados pelo itinerário. A manutenção concluída agora é vinculada à parada antes da atualização do status da visita, evitando o erro genérico ao clicar em Finalizar Serviço.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
