@@ -125,18 +125,23 @@ function stabilizerStatus(value){
 
 async function renderDashboard(poolId='') {
   const query=new URLSearchParams(); if(state.locationId)query.set('location_id',state.locationId); if(poolId)query.set('pool_id',poolId);
-  state.dashboard=await api(`/api/dashboard?${query}`);
+  const [dashboard,itineraries]=await Promise.all([api(`/api/dashboard?${query}`),api(`/api/itineraries?date_from=${brazilInputDate()}&limit=6`)]);
+  state.dashboard=dashboard;
   const d=state.dashboard, location=state.locations.find(x=>x.id===state.locationId);
   $('#mainContent').innerHTML=`<div class="page">
     <div class="page-head"><div><h1>🏊 Sistema de Controle de Piscinas</h1><p>${esc(location?.name||'Todos os locais')}</p></div><button class="btn primary" data-go="/startservice">＋ Iniciar Serviço</button></div>
     <section class="stats"><div class="stat-card"><span>Piscinas Ativas</span><strong>${d.stats.activePools}</strong></div><div class="stat-card"><span>Manutenções Hoje</span><strong>${d.stats.today}</strong></div><div class="stat-card"><span>Total de Registros</span><strong>${d.stats.total}</strong></div></section>
-    <section class="panel dashboard-chart"><div class="panel-title"><h2>Evolução dos Parâmetros Químicos</h2><select id="chartPool" class="select"><option value="">Todas as Piscinas</option>${state.pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}" ${p.id===poolId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div><div class="chart-wrap">${chartSvg(d.trends)}</div><div class="legend"><span><i style="background:#2563eb"></i>pH</span><span><i style="background:#16a34a"></i>Cloro</span><span><i style="background:#d97706"></i>Alcalinidade (÷10)</span><span><i style="background:#7c3aed"></i>Estabilizador (÷10)</span></div></section>
+    <section class="dashboard-main-row"><div class="panel dashboard-chart"><div class="panel-title"><h2>Evolução dos Parâmetros Químicos</h2><select id="chartPool" class="select"><option value="">Todas as Piscinas</option>${state.pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}" ${p.id===poolId?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div><div class="chart-wrap">${chartSvg(d.trends)}</div><div class="legend"><span><i style="background:#2563eb"></i>pH</span><span><i style="background:#16a34a"></i>Cloro</span><span><i style="background:#d97706"></i>Alcalinidade (÷10)</span><span><i style="background:#7c3aed"></i>Estabilizador (÷10)</span></div></div><aside class="panel dashboard-itineraries"><div class="panel-title"><div><h2>Itinerários</h2><small>Hoje e próximos dias</small></div><div class="dashboard-itinerary-actions"><button id="dashboardNewItinerary" class="btn primary dashboard-new-itinerary">＋ Novo</button><button class="btn secondary dashboard-new-itinerary" data-go="/itineraries">Abrir menu</button></div></div><div class="dashboard-itinerary-list">${itineraries.length?itineraries.map(dashboardItineraryCard).join(''):'<div class="empty">Nenhum itinerário programado.</div>'}</div></aside></section>
     <section class="history"><h2>Histórico de Manutenções</h2><div class="history-columns"><div class="history-column"><h3>Manutenções</h3><div class="history-list">${d.history.length?d.history.map(historyCard).join(''):'<div class="panel empty">Nenhuma manutenção encontrada.</div>'}</div></div><div class="history-column problems-column"><h3>Problemas detectados</h3><div class="history-list">${d.problems?.length?d.problems.map(problemCard).join(''):'<div class="panel empty">Nenhum problema detectado.</div>'}</div></div></div></section>
   </div>`;
   bindRoutes();
   $('#chartPool').onchange=e=>renderDashboard(e.target.value);
+  $('#dashboardNewItinerary').onclick=()=>itineraryFormModal();
+  $$('[data-dashboard-itinerary]').forEach(b=>b.onclick=()=>openItinerary(b.dataset.dashboardItinerary));
   $$('.history-open').forEach(b=>b.onclick=()=>openMaintenance(b.dataset.id));
 }
+
+function dashboardItineraryCard(item){const status=itineraryStatus(item);return `<button type="button" class="dashboard-itinerary-card" data-dashboard-itinerary="${item.id}"><div class="itinerary-title-line"><strong>${esc(item.title)}</strong><span class="badge ${status==='Concluído'?'':status==='Em andamento'?'progress':'off'}">${status}</span></div><span class="dashboard-itinerary-date">📅 ${dateOnlyBr(item.service_date)}</span>${isGeneralAdmin()?`<span class="dashboard-itinerary-user">👤 ${esc(item.created_by_name)}</span>`:''}<span class="dashboard-itinerary-progress"><i style="width:${item.total_stops?Math.round(Number(item.visited_stops)*100/Number(item.total_stops)):0}%"></i></span><small>${item.visited_stops}/${item.total_stops} locais visitados</small></button>`;}
 
 function historyCard(m) {
   return `<article class="history-card"><div><h3>${esc(m.pool_name)} - ${esc(m.location_name)}</h3><p>${esc(m.executor)}</p><p>${brDate(m.started_at)}</p><div class="chips"><span class="chip ${isIdeal('ph',m.ph)?'good':''}">pH: ${esc(m.ph)}</span><span class="chip ${isIdeal('chlorine',m.chlorine)?'good':''}">Cloro: ${esc(m.chlorine)}</span><span class="chip ${isIdeal('alk',m.alkalinity)?'good':''}">Alc: ${esc(m.alkalinity)}</span><span class="chip ${isIdeal('stabilizer',m.stabilizer)?'good':''}">Estab: ${esc(m.stabilizer??'-')} ppm</span></div><p>${(m.services||[]).length} serviço(s) realizado(s)</p></div><button class="history-open" data-id="${m.id}" title="Ver detalhes">⌕</button></article>`;
@@ -332,7 +337,7 @@ function itineraryFormModal(existing=null){
     if(!selected.length){toast('Selecione pelo menos um local.',true);return;}
     const missingAddress=selected.find(item=>!String(item.address||'').trim());
     if(missingAddress){toast('Todos os locais do itinerário precisam ter endereço cadastrado.',true);return;}
-    try{await api(existing?`/api/itineraries/${existing.id}`:'/api/itineraries',{method:existing?'PUT':'POST',body:JSON.stringify({title:values.title,service_date:values.service_date,location_ids:selected.map(item=>item.id)})});closeModal();toast(`Itinerário ${existing?'atualizado':'criado'}.`);renderItineraries();}catch(error){toast(error.message,true);}
+    try{await api(existing?`/api/itineraries/${existing.id}`:'/api/itineraries',{method:existing?'PUT':'POST',body:JSON.stringify({title:values.title,service_date:values.service_date,location_ids:selected.map(item=>item.id)})});closeModal();toast(`Itinerário ${existing?'atualizado':'criado'}.`);go(`/itineraries?service_date=${encodeURIComponent(values.service_date)}`);}catch(error){toast(error.message,true);}
   };
 }
 
@@ -363,7 +368,7 @@ async function openItinerary(id){
 
 function noServiceModal(itineraryId,stopId){
   openModal('Visita sem serviço',`<form id="noServiceForm"><div class="field"><span>Por que o serviço não foi realizado? *</span><textarea name="notes" placeholder="Ex: acesso ao local não autorizado, piscina interditada ou responsável ausente" required></textarea></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">Registrar visita</button></div></form>`);
-  $('#noServiceForm').onsubmit=async event=>{event.preventDefault();const values=Object.fromEntries(new FormData(event.currentTarget));try{await api(`/api/itineraries/${itineraryId}/stops/${stopId}/no-service`,{method:'POST',body:JSON.stringify(values)});closeModal();toast('Visita registrada sem serviço.');await renderItineraries();openItinerary(itineraryId);}catch(error){toast(error.message,true);}};
+  $('#noServiceForm').onsubmit=async event=>{event.preventDefault();const values=Object.fromEntries(new FormData(event.currentTarget));try{await api(`/api/itineraries/${itineraryId}/stops/${stopId}/no-service`,{method:'POST',body:JSON.stringify(values)});closeModal();toast('Visita registrada sem serviço.');if(currentRoute()==='dashboard')await renderDashboard();else await renderItineraries();openItinerary(itineraryId);}catch(error){toast(error.message,true);}};
 }
 
 async function deleteItinerary(id){if(!confirm('Deseja excluir este itinerário?'))return;try{await api(`/api/itineraries/${id}`,{method:'DELETE'});toast('Itinerário excluído.');renderItineraries();}catch(error){toast(error.message,true);}}

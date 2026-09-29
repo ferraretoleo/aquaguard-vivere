@@ -170,6 +170,8 @@ O arquivo `migrar_itinerarios.sql` permite aplicar manualmente as tabelas no Neo
 
 A versão 1.4.1 corrige a finalização de serviços iniciados pelo itinerário. A manutenção concluída agora é vinculada à parada antes da atualização do status da visita, evitando o erro genérico ao clicar em Finalizar Serviço.
 
+A versão 1.5.0 divide a área principal do dashboard em duas colunas. O gráfico de evolução química permanece à esquerda e os itinerários de hoje e dos próximos dias aparecem à direita, com situação, progresso das visitas e acesso aos detalhes. Cada usuário visualiza seus próprios itinerários; o administrador geral visualiza os itinerários de todos os usuários. Também é possível criar um itinerário futuro diretamente pelo dashboard.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.

@@ -661,12 +661,17 @@ app.delete('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res
 
 app.get('/api/itineraries', asyncRoute(async (req, res) => {
   const serviceDate = String(req.query.service_date || '').trim();
+  const dateFrom = String(req.query.date_from || '').trim();
   if (serviceDate && !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return res.status(400).json({ error: 'Data do itinerário inválida.' });
+  if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) return res.status(400).json({ error: 'Data inicial do itinerário inválida.' });
+  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 200, 1), 200);
   const params = [];
   const conditions = [];
   if (!isGlobalAdmin(req.user)) { params.push(req.user.id); conditions.push(`i.created_by=$${params.length}`); }
   if (serviceDate) { params.push(serviceDate); conditions.push(`i.service_date=$${params.length}::date`); }
+  if (dateFrom) { params.push(dateFrom); conditions.push(`i.service_date>=$${params.length}::date`); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  params.push(limit);
   const result = await pool.query(
     `SELECT i.*,u.name AS created_by_name,
             count(s.id)::int AS total_stops,
@@ -678,7 +683,8 @@ app.get('/api/itineraries', asyncRoute(async (req, res) => {
      LEFT JOIN itinerary_stops s ON s.itinerary_id=i.id
      ${where}
      GROUP BY i.id,u.name
-     ORDER BY i.service_date DESC,i.created_at DESC`, params
+     ORDER BY i.service_date ${dateFrom?'ASC':'DESC'},i.created_at DESC
+     LIMIT $${params.length}`, params
   );
   res.json(result.rows);
 }));
