@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS maintenances (
 );
 ALTER TABLE maintenances ADD COLUMN IF NOT EXISTS stabilizer numeric(7,2);
 ALTER TABLE maintenances ADD COLUMN IF NOT EXISTS problems_found text;
+
+-- Corrige o registro de 24/09/2026 salvo pela tela antiga no campo Observações.
+UPDATE maintenances
+SET problems_found = notes,
+    notes = NULL,
+    updated_at = now()
+WHERE problems_found IS NULL
+  AND notes = 'Pequeno vazamento na tubulação do motor'
+  AND (started_at AT TIME ZONE 'America/Sao_Paulo')::date = DATE '2026-09-24';
 CREATE INDEX IF NOT EXISTS ix_maintenances_pool_started ON maintenances(pool_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS ix_maintenances_status ON maintenances(status);
 

@@ -759,9 +759,23 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
   res.json({ ok: true, recipients });
 }));
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/usuarios', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'usuarios.html')));
-app.get(/^(?!\/api\/|\/auth\/|\/health$).*/, (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders(res, filePath) {
+    if (/\.(?:html|js|css)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
+app.get('/usuarios', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'usuarios.html'));
+});
+app.get(/^(?!\/api\/|\/auth\/|\/health$).*/, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 app.use((error, _req, res, _next) => {
   console.error(error);

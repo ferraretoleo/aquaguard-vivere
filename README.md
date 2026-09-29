@@ -158,6 +158,8 @@ Nos relatórios, o total de serviços executados representa a quantidade de manu
 
 Ao finalizar um serviço, o campo opcional `Problemas encontrados` permite registrar falhas, danos ou situações identificadas na piscina. O dashboard mostra esses registros em uma coluna própria, do mais recente para o mais antigo, respeitando o local e a piscina selecionados. O gráfico de evolução química ocupa toda a largura disponível no dashboard.
 
+A versão 1.2.1 desativa o cache dos arquivos JavaScript, CSS e HTML para impedir que a tela antiga continue ativa após um deploy. Ela também corrige automaticamente o registro de 24/09/2026 em que o texto `Pequeno vazamento na tubulação do motor` foi salvo em Observações, movendo-o para Problemas encontrados.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
