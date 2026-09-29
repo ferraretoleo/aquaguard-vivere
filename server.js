@@ -115,6 +115,10 @@ function canAccessLocation(req, locationId) {
   return isGlobalAdmin(req.user) || (req.user.location_ids || []).includes(String(locationId));
 }
 
+function canAccessItinerary(req, createdBy) {
+  return isGlobalAdmin(req.user) || String(createdBy) === String(req.user.id);
+}
+
 function locationScope(req, requestedValue, column, params) {
   const requested = validUuid(requestedValue) ? String(requestedValue) : null;
   if (requested) {
@@ -655,6 +659,142 @@ app.delete('/api/locations/:id', requireLocalManager, asyncRoute(async (req, res
   res.json({ ok: true });
 }));
 
+app.get('/api/itineraries', asyncRoute(async (req, res) => {
+  const serviceDate = String(req.query.service_date || '').trim();
+  if (serviceDate && !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return res.status(400).json({ error: 'Data do itinerário inválida.' });
+  const params = [];
+  const conditions = [];
+  if (!isGlobalAdmin(req.user)) { params.push(req.user.id); conditions.push(`i.created_by=$${params.length}`); }
+  if (serviceDate) { params.push(serviceDate); conditions.push(`i.service_date=$${params.length}::date`); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const result = await pool.query(
+    `SELECT i.*,u.name AS created_by_name,
+            count(s.id)::int AS total_stops,
+            count(s.id) FILTER (WHERE s.status<>'PENDING')::int AS visited_stops,
+            count(s.id) FILTER (WHERE s.status='VISITED_SERVICE')::int AS serviced_stops,
+            count(s.id) FILTER (WHERE s.status='VISITED_NO_SERVICE')::int AS no_service_stops
+     FROM itineraries i
+     JOIN users u ON u.id=i.created_by
+     LEFT JOIN itinerary_stops s ON s.itinerary_id=i.id
+     ${where}
+     GROUP BY i.id,u.name
+     ORDER BY i.service_date DESC,i.created_at DESC`, params
+  );
+  res.json(result.rows);
+}));
+
+app.get('/api/itineraries/:id', asyncRoute(async (req, res) => {
+  const itinerary = (await pool.query(
+    `SELECT i.*,u.name AS created_by_name FROM itineraries i JOIN users u ON u.id=i.created_by WHERE i.id=$1`,
+    [req.params.id]
+  )).rows[0];
+  if (!itinerary) return res.status(404).json({ error: 'Itinerário não encontrado.' });
+  if (!canAccessItinerary(req, itinerary.created_by)) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  const stops = (await pool.query(
+    `SELECT s.*,l.name AS location_name,l.address,l.document_number,
+            m.pool_id,p.name AS pool_name,m.started_at,m.ended_at
+     FROM itinerary_stops s
+     JOIN locations l ON l.id=s.location_id
+     LEFT JOIN maintenances m ON m.id=s.maintenance_id
+     LEFT JOIN pools p ON p.id=m.pool_id
+     WHERE s.itinerary_id=$1
+     ORDER BY s.position`, [itinerary.id]
+  )).rows;
+  res.json({ ...itinerary, stops });
+}));
+
+app.post('/api/itineraries', asyncRoute(async (req, res) => {
+  const title = String(req.body.title || '').trim();
+  const serviceDate = String(req.body.service_date || '').trim();
+  const locationIds = normalizeLocationIds(req.body.location_ids);
+  if (!title) return res.status(400).json({ error: 'Informe o nome do itinerário.' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) return res.status(400).json({ error: 'Informe a data do itinerário.' });
+  if (!locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local.' });
+  if (!(await ensureLocationsExist(locationIds)) || locationIds.some(id => !canAccessLocation(req, id))) return res.status(403).json({ error: 'Um ou mais locais não estão disponíveis para este usuário.' });
+  const withoutAddress = (await pool.query(`SELECT name FROM locations WHERE id=ANY($1::uuid[]) AND NULLIF(btrim(address),'') IS NULL`, [locationIds])).rows;
+  if (withoutAddress.length) return res.status(400).json({ error: `Cadastre o endereço antes de incluir no itinerário: ${withoutAddress.map(row => row.name).join(', ')}.` });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const itinerary = (await client.query(
+      `INSERT INTO itineraries(title,service_date,created_by) VALUES($1,$2,$3) RETURNING *`,
+      [title, serviceDate, req.user.id]
+    )).rows[0];
+    for (let index = 0; index < locationIds.length; index += 1) {
+      await client.query(`INSERT INTO itinerary_stops(itinerary_id,location_id,position) VALUES($1,$2,$3)`, [itinerary.id, locationIds[index], index + 1]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json(itinerary);
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}));
+
+app.put('/api/itineraries/:id', asyncRoute(async (req, res) => {
+  const existing = (await pool.query(`SELECT * FROM itineraries WHERE id=$1`, [req.params.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: 'Itinerário não encontrado.' });
+  if (!canAccessItinerary(req, existing.created_by)) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  const locked = (await pool.query(
+    `SELECT EXISTS(
+       SELECT 1 FROM itinerary_stops s
+       WHERE s.itinerary_id=$1
+         AND (s.status<>'PENDING' OR EXISTS(SELECT 1 FROM maintenances m WHERE m.itinerary_stop_id=s.id))
+     ) AS locked`, [existing.id]
+  )).rows[0].locked;
+  if (locked) return res.status(409).json({ error: 'Um itinerário que já possui visitas ou serviços iniciados não pode ser alterado.' });
+  const title = String(req.body.title || '').trim();
+  const serviceDate = String(req.body.service_date || '').trim();
+  const locationIds = normalizeLocationIds(req.body.location_ids);
+  if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate) || !locationIds.length) return res.status(400).json({ error: 'Informe o nome, a data e pelo menos um local.' });
+  if (!(await ensureLocationsExist(locationIds)) || locationIds.some(id => !canAccessLocation(req, id))) return res.status(403).json({ error: 'Um ou mais locais não estão disponíveis para este usuário.' });
+  const withoutAddress = (await pool.query(`SELECT name FROM locations WHERE id=ANY($1::uuid[]) AND NULLIF(btrim(address),'') IS NULL`, [locationIds])).rows;
+  if (withoutAddress.length) return res.status(400).json({ error: `Cadastre o endereço antes de incluir no itinerário: ${withoutAddress.map(row => row.name).join(', ')}.` });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`UPDATE itineraries SET title=$1,service_date=$2,updated_at=now() WHERE id=$3`, [title, serviceDate, existing.id]);
+    await client.query(`DELETE FROM itinerary_stops WHERE itinerary_id=$1`, [existing.id]);
+    for (let index = 0; index < locationIds.length; index += 1) {
+      await client.query(`INSERT INTO itinerary_stops(itinerary_id,location_id,position) VALUES($1,$2,$3)`, [existing.id, locationIds[index], index + 1]);
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}));
+
+app.delete('/api/itineraries/:id', asyncRoute(async (req, res) => {
+  const existing = (await pool.query(`SELECT * FROM itineraries WHERE id=$1`, [req.params.id])).rows[0];
+  if (!existing) return res.status(404).json({ error: 'Itinerário não encontrado.' });
+  if (!canAccessItinerary(req, existing.created_by)) return res.status(403).json({ error: 'Itinerário não disponível para este usuário.' });
+  const locked = (await pool.query(
+    `SELECT EXISTS(
+       SELECT 1 FROM itinerary_stops s
+       WHERE s.itinerary_id=$1
+         AND (s.status<>'PENDING' OR EXISTS(SELECT 1 FROM maintenances m WHERE m.itinerary_stop_id=s.id))
+     ) AS locked`, [existing.id]
+  )).rows[0].locked;
+  if (locked) return res.status(409).json({ error: 'Um itinerário que já possui visitas ou serviços iniciados não pode ser excluído.' });
+  await pool.query(`DELETE FROM itineraries WHERE id=$1`, [existing.id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/itineraries/:id/stops/:stopId/no-service', asyncRoute(async (req, res) => {
+  const notes = String(req.body.notes || '').trim();
+  if (!notes) return res.status(400).json({ error: 'Informe por que o serviço não foi realizado.' });
+  const stop = (await pool.query(
+    `SELECT s.*,i.created_by FROM itinerary_stops s JOIN itineraries i ON i.id=s.itinerary_id WHERE s.id=$1 AND i.id=$2`,
+    [req.params.stopId, req.params.id]
+  )).rows[0];
+  if (!stop) return res.status(404).json({ error: 'Parada não encontrada.' });
+  if (!canAccessItinerary(req, stop.created_by) || !canAccessLocation(req, stop.location_id)) return res.status(403).json({ error: 'Parada não disponível para este usuário.' });
+  const startedService = (await pool.query(`SELECT 1 FROM maintenances WHERE itinerary_stop_id=$1 AND status='STARTED' LIMIT 1`, [stop.id])).rows[0];
+  if (startedService) return res.status(409).json({ error: 'Existe um serviço em andamento nesta parada. Finalize o serviço para concluir a visita.' });
+  const result = await pool.query(
+    `UPDATE itinerary_stops SET status='VISITED_NO_SERVICE',visit_notes=$1,visited_at=now(),visited_by=$2
+     WHERE id=$3 AND status='PENDING' RETURNING *`, [notes, req.user.id, stop.id]
+  );
+  if (!result.rows[0]) return res.status(409).json({ error: 'Esta parada já foi concluída.' });
+  res.json(result.rows[0]);
+}));
+
 app.get('/api/pools', asyncRoute(async (req, res) => {
   const args = [];
   const scope = locationScope(req, req.query.location_id, 'p.location_id', args);
@@ -765,12 +905,22 @@ app.post('/api/maintenances/start', upload.array('photos', 5), asyncRoute(async 
   if (!validUuid(req.body.pool_id) || !String(req.body.executor || '').trim()) return res.status(400).json({ error: 'Informe a piscina e o executante.' });
   const selectedPool = (await pool.query(`SELECT location_id FROM pools WHERE id=$1 AND is_active=true`, [req.body.pool_id])).rows[0];
   if (!selectedPool || !canAccessLocation(req, selectedPool.location_id)) return res.status(403).json({ error: 'Piscina não disponível para este usuário.' });
+  const itineraryStopId = validUuid(req.body.itinerary_stop_id) ? String(req.body.itinerary_stop_id) : null;
+  if (itineraryStopId) {
+    const stop = (await pool.query(
+      `SELECT s.location_id,s.status,i.created_by FROM itinerary_stops s JOIN itineraries i ON i.id=s.itinerary_id WHERE s.id=$1`,
+      [itineraryStopId]
+    )).rows[0];
+    if (!stop || stop.status !== 'PENDING' || String(stop.location_id) !== String(selectedPool.location_id) || !canAccessItinerary(req, stop.created_by)) {
+      return res.status(400).json({ error: 'A parada do itinerário não está disponível para esta piscina.' });
+    }
+  }
   const active = (await pool.query(`SELECT m.id,p.name AS pool_name FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.status='STARTED' AND m.created_by=$1 ORDER BY m.started_at DESC LIMIT 1`, [req.user.id])).rows[0];
   if (active) return res.status(409).json({ error: `Você já possui um serviço em andamento na ${active.pool_name}. Finalize-o antes de iniciar outro.` });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const result = await client.query(`INSERT INTO maintenances(pool_id,executor,status,created_by) VALUES($1,$2,'STARTED',$3) RETURNING *`, [req.body.pool_id, String(req.body.executor).trim(), req.user.id]);
+    const result = await client.query(`INSERT INTO maintenances(pool_id,executor,status,created_by,itinerary_stop_id) VALUES($1,$2,'STARTED',$3,$4) RETURNING *`, [req.body.pool_id, String(req.body.executor).trim(), req.user.id, itineraryStopId]);
     for (const file of req.files || []) await client.query(`INSERT INTO maintenance_photos(maintenance_id,phase,file_name,mime_type,file_data) VALUES($1,'START',$2,$3,$4)`, [result.rows[0].id, file.originalname, file.mimetype, file.buffer]);
     await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
@@ -791,7 +941,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     return res.status(400).json({ error: 'Informe a descrição e um valor maior que zero para cada item do orçamento.' });
   }
   const quoteTotal = generateQuote ? quoteItems.reduce((total, item) => total + Math.round(item.value * 100), 0) / 100 : null;
-  const target = (await pool.query(`SELECT p.location_id,m.created_by FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
+  const target = (await pool.query(`SELECT p.location_id,m.created_by,m.itinerary_stop_id FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
   if (!target || !canAccessLocation(req, target.location_id) || (!canManageLocalData(req.user) && target.created_by !== req.user.id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
   const client = await pool.connect();
   let completedMaintenance;
@@ -806,6 +956,25 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
       return res.status(409).json({ error: 'Este serviço já foi encerrado ou não existe.' });
     }
     for (const file of req.files || []) await client.query(`INSERT INTO maintenance_photos(maintenance_id,phase,file_name,mime_type,file_data) VALUES($1,'END',$2,$3,$4)`, [req.params.id, file.originalname, file.mimetype, file.buffer]);
+    let itineraryStopId = target.itinerary_stop_id;
+    if (!itineraryStopId) {
+      itineraryStopId = (await client.query(
+        `SELECT s.id
+         FROM itinerary_stops s
+         JOIN itineraries i ON i.id=s.itinerary_id
+         WHERE s.location_id=$1 AND s.status='PENDING' AND i.created_by=$2
+           AND i.service_date=($3::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date
+         ORDER BY i.created_at,s.position
+         LIMIT 1`, [target.location_id, target.created_by, completedMaintenance.started_at]
+      )).rows[0]?.id || null;
+      if (itineraryStopId) await client.query(`UPDATE maintenances SET itinerary_stop_id=$1 WHERE id=$2`, [itineraryStopId, completedMaintenance.id]);
+    }
+    if (itineraryStopId) {
+      await client.query(
+        `UPDATE itinerary_stops SET status='VISITED_SERVICE',maintenance_id=$1,visited_at=now(),visited_by=$2,visit_notes=NULL
+         WHERE id=$3 AND status='PENDING'`, [completedMaintenance.id, req.user.id, itineraryStopId]
+      );
+    }
     await client.query('COMMIT');
     completedMaintenance = result.rows[0];
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }

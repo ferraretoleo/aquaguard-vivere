@@ -164,6 +164,10 @@ A versão 1.3.0 permite gerar um orçamento quando uma manutenção possui probl
 
 A versão 1.3.1 adiciona o campo opcional CNPJ/CPF ao cadastro de locais. O orçamento passa a exibir local, endereço, CNPJ/CPF, piscina, data e executante, e usa o conteúdo de Problemas encontrados como sua descrição.
 
+A versão 1.4.0 adiciona o menu Itinerário para todos os perfis. Cada usuário pode criar rotas usando os locais aos quais tem acesso, definir a ordem das visitas e abrir o trajeto no Google Maps sem configurar chave de API. Ao iniciar um serviço pela parada do itinerário e finalizar a manutenção, a visita é marcada automaticamente como serviço realizado e fica ligada ao registro. Quando não for possível atender, a parada pode ser marcada como visitada sem serviço, com justificativa obrigatória. O administrador geral pode consultar todos os itinerários; os demais perfis consultam os próprios itinerários e continuam limitados aos locais associados.
+
+O arquivo `migrar_itinerarios.sql` permite aplicar manualmente as tabelas no Neon. Em um deploy normal, o `schema.sql` faz essa atualização automaticamente na inicialização do Render.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.

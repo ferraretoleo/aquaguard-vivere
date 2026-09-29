@@ -25,7 +25,7 @@ function toast(message, error=false) {
 
 function currentRoute() {
   const name = location.pathname.replace(/^\/+|\/+$/g,'').toLowerCase();
-  return ['dashboard','startservice','pools','locations','reports'].includes(name) ? name : 'dashboard';
+  return ['dashboard','startservice','pools','locations','itineraries','reports'].includes(name) ? name : 'dashboard';
 }
 
 function go(path) {
@@ -89,6 +89,7 @@ async function renderRoute() {
     if (route==='startservice') await renderService();
     if (route==='pools') await renderPools();
     if (route==='locations') await renderLocations();
+    if (route==='itineraries') await renderItineraries();
     if (route==='reports') await renderReports();
   } catch (error) { main.innerHTML=`<div class="page"><div class="empty">${esc(error.message)}</div></div>`; toast(error.message,true); }
 }
@@ -218,15 +219,19 @@ async function openMaintenance(id) {
 async function renderService() {
   const active=await api('/api/maintenances/active');
   updateActiveServiceAlert(active);
+  const query=new URLSearchParams(location.search);
+  const itineraryStopId=!active?query.get('itinerary_stop_id')||'':'';
+  const itineraryLocationId=!active?query.get('location_id')||'':'';
+  if(itineraryLocationId&&state.locationId!==itineraryLocationId){state.locationId=itineraryLocationId;localStorage.setItem('aquaguard_location',itineraryLocationId);$('#locationSelect').value=itineraryLocationId;state.pools=await api(`/api/pools?location_id=${encodeURIComponent(itineraryLocationId)}`);}
   const now=brDate(new Date());
   $('#mainContent').innerHTML=`<div class="page"><button class="btn outline back-button" data-go="/dashboard">← Voltar</button><div class="page-head"><div><h1>${active?'Finalizar Serviço':'Iniciar Serviço'}</h1><p>${now}</p></div></div>
-    <form id="serviceForm" class="form-card" enctype="multipart/form-data">${active?completeServiceForm(active):startServiceForm()}</form></div>`;
+    <form id="serviceForm" class="form-card" enctype="multipart/form-data">${active?completeServiceForm(active):startServiceForm(itineraryStopId)}</form></div>`;
   bindRoutes();
   if(active)bindQuoteForm();
   $('#serviceForm').onsubmit=active?e=>completeService(e,active.id):startService;
 }
 
-function startServiceForm(){return `<div class="form-section"><h3>Informações Básicas</h3><div class="form-grid"><div class="field"><span>Piscina *</span><select name="pool_id" required><option value="">Selecione a piscina</option>${state.pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div class="field"><span>Nome do Executante *</span><input name="executor" placeholder="Digite seu nome" required></div></div></div><div class="form-section"><h3>Fotos do Início (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple><small>Até 5 fotos, com no máximo 6 MB cada.</small></div></div><div class="info">Após iniciar o serviço, você poderá retornar ao app para registrar o fechamento com as medições e serviços executados.</div><div class="form-actions"><button class="btn primary" type="submit">Iniciar Serviço</button></div>`;}
+function startServiceForm(itineraryStopId=''){return `${itineraryStopId?`<input type="hidden" name="itinerary_stop_id" value="${esc(itineraryStopId)}"><div class="info itinerary-service-info">Este serviço será vinculado automaticamente à parada selecionada no itinerário.</div>`:''}<div class="form-section"><h3>Informações Básicas</h3><div class="form-grid"><div class="field"><span>Piscina *</span><select name="pool_id" required><option value="">Selecione a piscina</option>${state.pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div class="field"><span>Nome do Executante *</span><input name="executor" value="${esc(state.user?.name||'')}" placeholder="Digite seu nome" required></div></div></div><div class="form-section"><h3>Fotos do Início (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple><small>Até 5 fotos, com no máximo 6 MB cada.</small></div></div><div class="info">Após iniciar o serviço, você poderá retornar ao app para registrar o fechamento com as medições e serviços executados.</div><div class="form-actions"><button class="btn primary" type="submit">Iniciar Serviço</button></div>`;}
 
 function completeServiceForm(m){return `<div class="info">Serviço iniciado em ${brDate(m.started_at)} por ${esc(m.executor)} na ${esc(m.pool_name)}.</div><div class="form-section"><h3>Medições Químicas</h3><div class="form-grid"><div class="field"><span>pH *</span><input name="ph" type="number" min="0" max="14" step="0.1" required><small class="chemical-reference">Referência ideal: 7,2 a 7,6</small></div><div class="field"><span>Cloro Livre (ppm) *</span><input name="chlorine" type="number" min="0" step="0.1" required><small class="chemical-reference">Referência ideal: 1 a 3 ppm</small></div><div class="field"><span>Alcalinidade (ppm) *</span><input name="alkalinity" type="number" min="0" step="1" required><small class="chemical-reference">Referência ideal: 80 a 120 ppm</small></div><div class="field"><span>Estabilizador / Ácido Cianúrico (ppm) *</span><input name="stabilizer" type="number" min="0" step="1" required><small class="chemical-reference">Ideal: 30 a 50 ppm · Piscina de sal: 60 a 80 ppm</small></div></div></div><div class="form-section"><h3>Serviços Executados</h3><div class="checkboxes">${['Limpeza Superficial','Aspiração','Limpeza de Borda','Retrolavagem do Filtro','Tratamento Químico','Verificação dos Equipamentos'].map(s=>`<label class="check"><input type="checkbox" name="services" value="${s}">${s}</label>`).join('')}</div></div><div class="form-section"><div class="field"><span>Problemas encontrados</span><textarea name="problems_found" id="problemsFound" placeholder="Descreva os problemas identificados durante o serviço"></textarea></div><label class="check quote-toggle"><input type="checkbox" name="generate_quote" id="generateQuote" disabled> Gerar orçamento para este problema</label><div id="quoteSection" class="quote-section hidden"><div class="quote-head"><div><h3>Itens do orçamento</h3><small>Informe a descrição e o valor de cada item.</small></div><button type="button" class="btn secondary" id="addQuoteItem">＋ Adicionar item</button></div><div id="quoteItems" class="quote-items"></div><div class="quote-total"><span>Valor total</span><strong id="quoteTotal">R$ 0,00</strong></div></div></div><div class="form-section"><div class="field"><span>Observações</span><textarea name="notes" placeholder="Informe ocorrências, produtos aplicados ou recomendações"></textarea></div></div><div class="form-section"><h3>Fotos do Término (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple></div></div><div class="form-actions"><button class="btn primary" type="submit">Finalizar Serviço</button></div>`;}
 
@@ -297,6 +302,71 @@ function locationContactRow(contact={}){return `<div class="location-contact-row
 function bindLocationContactRows(){const list=$('#locationContacts');if(!list)return;list.onclick=e=>{const button=e.target.closest('[data-remove-contact]');if(button)button.closest('.location-contact-row').remove();};$('#addLocationContact').onclick=()=>list.insertAdjacentHTML('beforeend',locationContactRow());}
 function locationModal(l=null){const contacts=Array.isArray(l?.notification_contacts)?l.notification_contacts:[];openModal(l?'Editar Local':'Novo Local',`<form id="locationForm"><div class="form-grid"><div class="field full-row"><span>Nome do Local *</span><input name="name" value="${esc(l?.name||'')}" placeholder="Ex: Vivere Palhano" required></div><div class="field full-row"><span>Endereço</span><input name="address" value="${esc(l?.address||'')}" placeholder="Ex: Rua ABC, 123"></div><div class="field full-row"><span>CNPJ/CPF</span><input name="document_number" value="${esc(l?.document_number||'')}" placeholder="Informe CPF ou CNPJ"><small>CPF com 11 dígitos ou CNPJ com 14 dígitos.</small></div><div class="field full-row"><span>Emails para Relatórios</span><textarea name="report_emails" placeholder="Um e-mail por linha">${esc((l?.report_emails||[]).join('\n'))}</textarea></div><div class="field full-row"><span>Contatos para Alertas e Relatórios</span><div id="locationContacts" class="location-contacts">${contacts.map(locationContactRow).join('')}</div><button id="addLocationContact" type="button" class="btn secondary location-contact-add">＋ Adicionar contato</button><small>Cadastre o nome e o telefone com DDD. O envio automático será adicionado futuramente.</small></div><div class="field"><span>Status</span><select name="is_active"><option value="true" ${l?.is_active!==false?'selected':''}>Ativo</option><option value="false" ${l?.is_active===false?'selected':''}>Inativo</option></select></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">${l?'Salvar':'Criar'}</button></div></form>`);bindLocationContactRows();$('#locationForm').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,v=Object.fromEntries(new FormData(form));const documentDigits=String(v.document_number||'').replace(/\D/g,'');if(documentDigits&&![11,14].includes(documentDigits.length)){toast('Informe um CPF com 11 dígitos ou CNPJ com 14 dígitos.',true);return;}v.is_active=v.is_active==='true';v.notification_contacts=$$('.location-contact-row',form).map(row=>({name:$('[data-contact-name]',row).value.trim(),phone:$('[data-contact-phone]',row).value.trim()})).filter(c=>c.name||c.phone);if(v.notification_contacts.some(c=>!c.name||!c.phone)){toast('Informe o nome e o telefone de cada contato.',true);return;}try{await api(l?`/api/locations/${l.id}`:'/api/locations',{method:l?'PUT':'POST',body:JSON.stringify(v)});closeModal();toast(`Local ${l?'atualizado':'criado'}.`);await loadBase();renderLocations();}catch(err){toast(err.message,true);}};}
 async function disableLocation(id){if(!confirm('Deseja desativar este local? Os dados e o histórico serão preservados.'))return;try{await api(`/api/locations/${id}`,{method:'DELETE'});toast('Local desativado.');await loadBase();renderLocations();}catch(e){toast(e.message,true);}}
+
+function dateOnlyBr(value){return value?String(value).slice(0,10).split('-').reverse().join('/'):'-';}
+function itineraryStatus(item){if(!item.total_stops)return 'Sem paradas';if(item.visited_stops===item.total_stops)return 'Concluído';if(item.visited_stops>0)return 'Em andamento';return 'Planejado';}
+function itineraryCard(item){const status=itineraryStatus(item);return `<article class="item-card itinerary-card"><div class="item-main"><div class="itinerary-title-line"><h3>${esc(item.title)}</h3><span class="badge ${status==='Concluído'?'':status==='Em andamento'?'progress':'off'}">${status}</span></div><div class="item-meta"><span>📅 ${dateOnlyBr(item.service_date)}</span><span>👤 ${esc(item.created_by_name)}</span><span>📍 ${item.visited_stops}/${item.total_stops} visitados</span><span>✓ ${item.serviced_stops} com serviço</span>${item.no_service_stops?`<span>⚠ ${item.no_service_stops} sem serviço</span>`:''}</div></div><div class="actions"><button class="btn primary" data-open-itinerary="${item.id}">Abrir</button>${Number(item.visited_stops)===0?`<button class="btn outline" data-edit-itinerary="${item.id}">Editar</button><button class="btn danger" data-delete-itinerary="${item.id}">Excluir</button>`:''}</div></article>`;}
+
+async function renderItineraries(){
+  const queryDate=new URLSearchParams(location.search).get('service_date')||brazilInputDate();
+  const itineraries=await api(`/api/itineraries?service_date=${encodeURIComponent(queryDate)}`);
+  $('#mainContent').innerHTML=`<div class="page"><div class="page-head"><div><h1>Itinerários</h1><p>Organize a sequência de visitas aos locais</p></div><button id="newItinerary" class="btn primary">＋ Novo itinerário</button></div><div class="panel itinerary-filter"><div class="field"><span>Data das visitas</span><input id="itineraryDate" type="date" value="${esc(queryDate)}"></div><button id="filterItinerary" class="btn outline">Filtrar</button></div><div class="cards-list itinerary-list">${itineraries.map(itineraryCard).join('')||'<div class="panel empty">Nenhum itinerário encontrado nesta data.</div>'}</div></div>`;
+  $('#newItinerary').onclick=()=>itineraryFormModal();
+  $('#filterItinerary').onclick=()=>go(`/itineraries?service_date=${encodeURIComponent($('#itineraryDate').value)}`);
+  $$('[data-open-itinerary]').forEach(button=>button.onclick=()=>openItinerary(button.dataset.openItinerary));
+  $$('[data-edit-itinerary]').forEach(button=>button.onclick=async()=>itineraryFormModal(await api(`/api/itineraries/${button.dataset.editItinerary}`)));
+  $$('[data-delete-itinerary]').forEach(button=>button.onclick=()=>deleteItinerary(button.dataset.deleteItinerary));
+}
+
+function itineraryLocationRows(existing){
+  const positions=new Map((existing?.stops||[]).map(stop=>[stop.location_id,stop.position]));
+  return state.locations.filter(item=>item.is_active).map((item,index)=>`<label class="itinerary-location"><input type="checkbox" data-itinerary-location value="${item.id}" ${positions.has(item.id)?'checked':''}><span><strong>${esc(item.name)}</strong><small>${esc(item.address||'Endereço não informado')}</small></span><input type="number" min="1" data-itinerary-position value="${positions.get(item.id)||index+1}" aria-label="Ordem da visita"></label>`).join('');
+}
+
+function itineraryFormModal(existing=null){
+  openModal(existing?'Editar itinerário':'Novo itinerário',`<form id="itineraryForm"><div class="form-grid"><div class="field full-row"><span>Nome do itinerário *</span><input name="title" value="${esc(existing?.title||'Rota de visitas')}" required></div><div class="field"><span>Data *</span><input name="service_date" type="date" value="${esc(existing?.service_date?String(existing.service_date).slice(0,10):brazilInputDate())}" required></div><div class="field full-row"><span>Locais e ordem das visitas *</span><div class="itinerary-locations">${itineraryLocationRows(existing)}</div><small>Marque os locais e informe a ordem em que devem ser visitados.</small></div></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">Salvar itinerário</button></div></form>`);
+  $('#itineraryForm').onsubmit=async event=>{
+    event.preventDefault();
+    const form=event.currentTarget,values=Object.fromEntries(new FormData(form));
+    const selected=$$('[data-itinerary-location]:checked',form).map((checkbox,index)=>{const row=checkbox.closest('.itinerary-location');return{id:checkbox.value,position:Number($('[data-itinerary-position]',row).value)||index+1,address:state.locations.find(item=>item.id===checkbox.value)?.address};}).sort((a,b)=>a.position-b.position);
+    if(!selected.length){toast('Selecione pelo menos um local.',true);return;}
+    const missingAddress=selected.find(item=>!String(item.address||'').trim());
+    if(missingAddress){toast('Todos os locais do itinerário precisam ter endereço cadastrado.',true);return;}
+    try{await api(existing?`/api/itineraries/${existing.id}`:'/api/itineraries',{method:existing?'PUT':'POST',body:JSON.stringify({title:values.title,service_date:values.service_date,location_ids:selected.map(item=>item.id)})});closeModal();toast(`Itinerário ${existing?'atualizado':'criado'}.`);renderItineraries();}catch(error){toast(error.message,true);}
+  };
+}
+
+function googleMapsRoute(stops){
+  const addresses=stops.map(stop=>String(stop.address||'').trim()).filter(Boolean);
+  if(!addresses.length)return '';
+  const destination=addresses[addresses.length-1];
+  const params=new URLSearchParams({api:'1',destination,travelmode:'driving'});
+  if(addresses.length>1)params.set('waypoints',addresses.slice(0,-1).join('|'));
+  return `https://www.google.com/maps/dir/?${params}`;
+}
+
+function itineraryStopCard(stop){
+  const done=stop.status!=='PENDING';
+  const status=stop.status==='VISITED_SERVICE'?'✓ Serviço realizado':stop.status==='VISITED_NO_SERVICE'?'✓ Visitado sem serviço':'Pendente';
+  return `<article class="itinerary-stop ${done?'done':''}"><div class="stop-position">${stop.position}</div><div class="stop-content"><div class="itinerary-title-line"><h3>${esc(stop.location_name)}</h3><span class="badge ${stop.status==='VISITED_NO_SERVICE'?'warning':done?'':'off'}">${status}</span></div><p>${esc(stop.address||'Endereço não informado')}</p>${stop.pool_name?`<p><strong>Piscina:</strong> ${esc(stop.pool_name)} · ${brDate(stop.ended_at)}</p>`:''}${stop.visit_notes?`<div class="stop-notes"><strong>Motivo:</strong> ${esc(stop.visit_notes)}</div>`:''}</div>${stop.status==='PENDING'?`<div class="stop-actions"><button class="btn primary" data-start-stop="${stop.id}" data-location-id="${stop.location_id}">Iniciar serviço</button><button class="btn outline" data-no-service="${stop.id}">Visitado sem serviço</button></div>`:stop.maintenance_id?`<button class="btn outline" data-maintenance-id="${stop.maintenance_id}">Ver serviço</button>`:''}</article>`;
+}
+
+async function openItinerary(id){
+  try{
+    const item=await api(`/api/itineraries/${id}`),mapsUrl=googleMapsRoute(item.stops);
+    openModal(item.title,`<div class="itinerary-detail-head"><div><strong>${dateOnlyBr(item.service_date)}</strong><small>Criado por ${esc(item.created_by_name)}</small></div>${mapsUrl?`<a class="btn primary" href="${esc(mapsUrl)}" target="_blank" rel="noopener">Abrir rota no Google Maps</a>`:''}</div><div class="itinerary-stops">${item.stops.map(itineraryStopCard).join('')}</div>`);
+    $$('[data-start-stop]').forEach(button=>button.onclick=async()=>{const locationId=button.dataset.locationId;state.locationId=locationId;localStorage.setItem('aquaguard_location',locationId);state.pools=await api(`/api/pools?location_id=${encodeURIComponent(locationId)}`);closeModal();go(`/startservice?itinerary_stop_id=${encodeURIComponent(button.dataset.startStop)}&location_id=${encodeURIComponent(locationId)}`);});
+    $$('[data-no-service]').forEach(button=>button.onclick=()=>noServiceModal(id,button.dataset.noService));
+    $$('[data-maintenance-id]').forEach(button=>button.onclick=()=>openMaintenance(button.dataset.maintenanceId));
+  }catch(error){toast(error.message,true);}
+}
+
+function noServiceModal(itineraryId,stopId){
+  openModal('Visita sem serviço',`<form id="noServiceForm"><div class="field"><span>Por que o serviço não foi realizado? *</span><textarea name="notes" placeholder="Ex: acesso ao local não autorizado, piscina interditada ou responsável ausente" required></textarea></div><div class="form-actions"><button type="button" class="btn outline" data-close-modal>Cancelar</button><button class="btn primary" type="submit">Registrar visita</button></div></form>`);
+  $('#noServiceForm').onsubmit=async event=>{event.preventDefault();const values=Object.fromEntries(new FormData(event.currentTarget));try{await api(`/api/itineraries/${itineraryId}/stops/${stopId}/no-service`,{method:'POST',body:JSON.stringify(values)});closeModal();toast('Visita registrada sem serviço.');await renderItineraries();openItinerary(itineraryId);}catch(error){toast(error.message,true);}};
+}
+
+async function deleteItinerary(id){if(!confirm('Deseja excluir este itinerário?'))return;try{await api(`/api/itineraries/${id}`,{method:'DELETE'});toast('Itinerário excluído.');renderItineraries();}catch(error){toast(error.message,true);}}
 
 function brazilInputDate(value=new Date()){
   const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(value);
