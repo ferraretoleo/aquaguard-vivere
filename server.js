@@ -175,6 +175,22 @@ function notificationContacts(value) {
   })).filter(contact => contact.name && contact.phone);
 }
 
+function parseQuoteItems(value) {
+  let items = value;
+  if (typeof items === 'string') {
+    try { items = JSON.parse(items); } catch { items = []; }
+  }
+  if (!Array.isArray(items)) return [];
+  return items.map(item => ({
+    description: String(item?.description || '').trim(),
+    value: Math.round(Number(item?.value) * 100) / 100
+  }));
+}
+
+function formatBrl(value) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(value || 0));
+}
+
 function buildMaintenanceText(m) {
   const date = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' });
   return [
@@ -191,7 +207,8 @@ function buildMaintenanceText(m) {
     '',
     `*Serviços:* ${(m.services || []).join(', ') || '-'}`,
     m.problems_found ? `*Problemas encontrados:* ${m.problems_found}` : '',
-    m.notes ? `*Observações:* ${m.notes}` : ''
+    m.notes ? `*Observações:* ${m.notes}` : '',
+    m.quote_total !== null && m.quote_total !== undefined ? `*Orçamento:* ${formatBrl(m.quote_total)}` : ''
   ].filter(Boolean).join('\n');
 }
 
@@ -246,6 +263,66 @@ function createReportPdf(data, title = 'Relatório de Manutenção') {
   }
   doc.moveDown(2);
   doc.fontSize(9).fillColor('#6b7280').text(`Documento gerado pelo AquaGuard em ${dt(new Date())}.`, { align: 'center' });
+  doc.end();
+  return done;
+}
+
+function createQuotePdf(data) {
+  const doc = new PDFDocument({ size: 'A4', margin: 48, info: { Title: `Orçamento - ${data.pool_name}` } });
+  const chunks = [];
+  doc.on('data', chunk => chunks.push(chunk));
+  const done = new Promise(resolve => doc.on('end', () => resolve(Buffer.concat(chunks))));
+  const dt = value => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(value)) : '-';
+  const items = Array.isArray(data.quote_items) ? data.quote_items : [];
+
+  doc.fillColor('#0f766e').fontSize(26).text('AquaGuard', { align: 'center' });
+  doc.fillColor('#111827').fontSize(19).text('Orçamento de Manutenção', { align: 'center' });
+  doc.fontSize(10).fillColor('#6b7280').text(`Orçamento nº ${String(data.id).slice(0, 8).toUpperCase()}`, { align: 'center' });
+  doc.moveDown(1.5);
+
+  doc.roundedRect(48, doc.y, 499, 82, 8).fillAndStroke('#f8fafc', '#e5e7eb');
+  const infoY = doc.y + 14;
+  doc.fillColor('#111827').fontSize(11).text(`Local: ${data.location_name}`, 62, infoY, { width: 225 });
+  doc.text(`Piscina: ${data.pool_name}`, 300, infoY, { width: 230 });
+  doc.text(`Data: ${dt(data.quote_created_at || data.ended_at)}`, 62, infoY + 25, { width: 225 });
+  doc.text(`Executante: ${data.executor}`, 300, infoY + 25, { width: 230 });
+  doc.y = infoY + 82;
+
+  doc.fillColor('#991b1b').fontSize(13).text('Problema encontrado');
+  doc.fillColor('#374151').fontSize(11).text(data.problems_found || 'Não informado.');
+  doc.moveDown();
+  doc.fillColor('#111827').fontSize(13).text('Descrição');
+  doc.fillColor('#374151').fontSize(11).text(data.notes || 'Não informada.');
+  doc.moveDown(1.2);
+
+  let y = doc.y;
+  const drawTableHeader = () => {
+    doc.rect(48, y, 499, 28).fill('#0f766e');
+    doc.fillColor('#ffffff').fontSize(10).text('Item', 60, y + 9, { width: 355 });
+    doc.text('Valor', 430, y + 9, { width: 105, align: 'right' });
+    y += 28;
+  };
+  drawTableHeader();
+  items.forEach((item, index) => {
+    const description = `${index + 1}. ${item.description}`;
+    const rowHeight = Math.max(30, doc.heightOfString(description, { width: 355 }) + 16);
+    if (y + rowHeight > 735) {
+      doc.addPage();
+      y = 48;
+      drawTableHeader();
+    }
+    doc.rect(48, y, 499, rowHeight).fillAndStroke(index % 2 ? '#ffffff' : '#f8fafc', '#e5e7eb');
+    doc.fillColor('#374151').fontSize(10).text(description, 60, y + 8, { width: 355 });
+    doc.text(formatBrl(item.value), 430, y + 8, { width: 105, align: 'right' });
+    y += rowHeight;
+  });
+
+  if (y + 58 > 750) { doc.addPage(); y = 48; }
+  doc.roundedRect(337, y + 14, 210, 40, 7).fill('#ecfdf5');
+  doc.fillColor('#065f46').fontSize(13).text('Valor total', 351, y + 27, { width: 90 });
+  doc.fontSize(15).text(formatBrl(data.quote_total), 430, y + 25, { width: 103, align: 'right' });
+  doc.y = y + 78;
+  doc.fontSize(9).fillColor('#6b7280').text('Orçamento gerado pelo AquaGuard. Os valores correspondem aos itens informados no encerramento da manutenção.', { align: 'center' });
   doc.end();
   return done;
 }
@@ -692,6 +769,14 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     return res.status(400).json({ error: 'Informe todas as medições químicas, incluindo o estabilizador em ppm.' });
   }
   const services = JSON.parse(req.body.services || '[]');
+  const problemsFound = String(req.body.problems_found || '').trim();
+  const generateQuote = String(req.body.generate_quote || '').toLowerCase() === 'true';
+  const quoteItems = generateQuote ? parseQuoteItems(req.body.quote_items) : [];
+  if (generateQuote && !problemsFound) return res.status(400).json({ error: 'Informe os problemas encontrados antes de gerar o orçamento.' });
+  if (generateQuote && (!quoteItems.length || quoteItems.some(item => !item.description || !Number.isFinite(item.value) || item.value <= 0))) {
+    return res.status(400).json({ error: 'Informe a descrição e um valor maior que zero para cada item do orçamento.' });
+  }
+  const quoteTotal = generateQuote ? quoteItems.reduce((total, item) => total + Math.round(item.value * 100), 0) / 100 : null;
   const target = (await pool.query(`SELECT p.location_id,m.created_by FROM maintenances m JOIN pools p ON p.id=m.pool_id WHERE m.id=$1`, [req.params.id])).rows[0];
   if (!target || !canAccessLocation(req, target.location_id) || (!canManageLocalData(req.user) && target.created_by !== req.user.id)) return res.status(403).json({ error: 'Manutenção não disponível para este usuário.' });
   const client = await pool.connect();
@@ -699,8 +784,8 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `UPDATE maintenances SET status='COMPLETED',ended_at=now(),ph=$1,chlorine=$2,alkalinity=$3,stabilizer=$4,services=$5,problems_found=$6,notes=$7,updated_at=now() WHERE id=$8 AND status='STARTED' RETURNING *`,
-      [req.body.ph, req.body.chlorine, req.body.alkalinity, req.body.stabilizer, services, String(req.body.problems_found || '').trim() || null, String(req.body.notes || '').trim() || null, req.params.id]
+      `UPDATE maintenances SET status='COMPLETED',ended_at=now(),ph=$1,chlorine=$2,alkalinity=$3,stabilizer=$4,services=$5,problems_found=$6,notes=$7,quote_items=$8::jsonb,quote_total=$9,quote_created_at=CASE WHEN $9::numeric IS NULL THEN NULL ELSE now() END,updated_at=now() WHERE id=$10 AND status='STARTED' RETURNING *`,
+      [req.body.ph, req.body.chlorine, req.body.alkalinity, req.body.stabilizer, services, problemsFound || null, String(req.body.notes || '').trim() || null, JSON.stringify(quoteItems), quoteTotal, req.params.id]
     );
     if (!result.rows[0]) {
       await client.query('ROLLBACK');
@@ -711,7 +796,7 @@ app.post('/api/maintenances/:id/complete', upload.array('photos', 5), asyncRoute
     completedMaintenance = result.rows[0];
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 
-  res.json(completedMaintenance);
+  res.json({ ...completedMaintenance, quote_url: quoteTotal !== null ? `/api/maintenances/${completedMaintenance.id}/quote.pdf` : null });
 }));
 
 app.get('/api/maintenances/:id', asyncRoute(async (req, res) => {
@@ -734,6 +819,18 @@ app.get('/api/maintenances/:id/report.pdf', asyncRoute(async (req, res) => {
   if (!canAccessLocation(req, data.location_id)) return res.sendStatus(403);
   const pdf = await createReportPdf(data);
   res.setHeader('Content-Disposition', `attachment; filename="relatorio-${data.pool_name.replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.pdf"`);
+  res.type('application/pdf').send(pdf);
+}));
+
+app.get('/api/maintenances/:id/quote.pdf', asyncRoute(async (req, res) => {
+  const data = await getMaintenance(req.params.id);
+  if (!data) return res.sendStatus(404);
+  if (!canAccessLocation(req, data.location_id)) return res.status(403).json({ error: 'Orçamento não disponível para este usuário.' });
+  if (!Array.isArray(data.quote_items) || !data.quote_items.length || data.quote_total === null) {
+    return res.status(404).json({ error: 'Esta manutenção não possui orçamento.' });
+  }
+  const pdf = await createQuotePdf(data);
+  res.setHeader('Content-Disposition', `inline; filename="orcamento-${data.pool_name.replace(/[^a-z0-9]+/gi,'-').toLowerCase()}.pdf"`);
   res.type('application/pdf').send(pdf);
 }));
 

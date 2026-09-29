@@ -209,7 +209,7 @@ async function openMaintenance(id) {
       <h3>Medições Químicas</h3><div class="measurements"><div class="measure"><span>pH</span><strong>${esc(m.ph)}</strong><small>${isIdeal('ph',m.ph)?'✓ Ideal':'⚠ Verificar'} · Ref. 7,2 a 7,6</small></div><div class="measure"><span>Cloro Livre</span><strong>${esc(m.chlorine)}</strong><small>${isIdeal('chlorine',m.chlorine)?'✓ Ideal':'⚠ Verificar'} · Ref. 1 a 3 ppm</small></div><div class="measure"><span>Alcalinidade</span><strong>${esc(m.alkalinity)}</strong><small>${isIdeal('alk',m.alkalinity)?'✓ Ideal':'⚠ Verificar'} · Ref. 80 a 120 ppm</small></div><div class="measure"><span>Estabilizador (CYA)</span><strong>${esc(m.stabilizer??'-')} ppm</strong><small>${esc(cya.label)} · Ref. 30 a 50 ppm</small></div></div>
       <div class="info"><strong>${esc(cya.label)}</strong><br>${esc(cya.meaning)}<br><strong>O que fazer:</strong> ${esc(cya.action)}</div>
       <h3>Serviços Executados</h3><div class="chips">${(m.services||[]).map(s=>`<span class="chip good">✓ ${esc(s)}</span>`).join('')||'-'}</div>${m.problems_found?`<h3>Problemas encontrados</h3><div class="problem-detail">${esc(m.problems_found)}</div>`:''}${m.notes?`<h3>Observações</h3><p>${esc(m.notes)}</p>`:''}
-      <div class="form-actions" data-html2canvas-ignore><a class="btn outline" href="/api/maintenances/${m.id}/report.pdf">Gerar Relatório</a><button id="copyWhats" class="btn primary">Copiar para WhatsApp</button></div>`);
+      <div class="form-actions" data-html2canvas-ignore><a class="btn outline" href="/api/maintenances/${m.id}/report.pdf">Gerar Relatório</a>${m.quote_total!==null&&m.quote_total!==undefined?`<a class="btn secondary" href="/api/maintenances/${m.id}/quote.pdf" target="_blank">Imprimir Orçamento</a>`:''}<button id="copyWhats" class="btn primary">Copiar para WhatsApp</button></div>`);
     const imagePromise=createMaintenanceImage(m).catch(error=>({error}));
     $('#copyWhats').onclick=()=>shareMaintenanceImage(m,imagePromise);
   } catch(e){toast(e.message,true);}
@@ -222,15 +222,69 @@ async function renderService() {
   $('#mainContent').innerHTML=`<div class="page"><button class="btn outline back-button" data-go="/dashboard">← Voltar</button><div class="page-head"><div><h1>${active?'Finalizar Serviço':'Iniciar Serviço'}</h1><p>${now}</p></div></div>
     <form id="serviceForm" class="form-card" enctype="multipart/form-data">${active?completeServiceForm(active):startServiceForm()}</form></div>`;
   bindRoutes();
+  if(active)bindQuoteForm();
   $('#serviceForm').onsubmit=active?e=>completeService(e,active.id):startService;
 }
 
 function startServiceForm(){return `<div class="form-section"><h3>Informações Básicas</h3><div class="form-grid"><div class="field"><span>Piscina *</span><select name="pool_id" required><option value="">Selecione a piscina</option>${state.pools.filter(p=>p.is_active).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div class="field"><span>Nome do Executante *</span><input name="executor" placeholder="Digite seu nome" required></div></div></div><div class="form-section"><h3>Fotos do Início (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple><small>Até 5 fotos, com no máximo 6 MB cada.</small></div></div><div class="info">Após iniciar o serviço, você poderá retornar ao app para registrar o fechamento com as medições e serviços executados.</div><div class="form-actions"><button class="btn primary" type="submit">Iniciar Serviço</button></div>`;}
 
-function completeServiceForm(m){return `<div class="info">Serviço iniciado em ${brDate(m.started_at)} por ${esc(m.executor)} na ${esc(m.pool_name)}.</div><div class="form-section"><h3>Medições Químicas</h3><div class="form-grid"><div class="field"><span>pH *</span><input name="ph" type="number" min="0" max="14" step="0.1" required><small class="chemical-reference">Referência ideal: 7,2 a 7,6</small></div><div class="field"><span>Cloro Livre (ppm) *</span><input name="chlorine" type="number" min="0" step="0.1" required><small class="chemical-reference">Referência ideal: 1 a 3 ppm</small></div><div class="field"><span>Alcalinidade (ppm) *</span><input name="alkalinity" type="number" min="0" step="1" required><small class="chemical-reference">Referência ideal: 80 a 120 ppm</small></div><div class="field"><span>Estabilizador / Ácido Cianúrico (ppm) *</span><input name="stabilizer" type="number" min="0" step="1" required><small class="chemical-reference">Ideal: 30 a 50 ppm · Piscina de sal: 60 a 80 ppm</small></div></div></div><div class="form-section"><h3>Serviços Executados</h3><div class="checkboxes">${['Limpeza Superficial','Aspiração','Limpeza de Borda','Retrolavagem do Filtro','Tratamento Químico','Verificação dos Equipamentos'].map(s=>`<label class="check"><input type="checkbox" name="services" value="${s}">${s}</label>`).join('')}</div></div><div class="form-section"><div class="field"><span>Problemas encontrados</span><textarea name="problems_found" placeholder="Descreva os problemas identificados durante o serviço"></textarea></div></div><div class="form-section"><div class="field"><span>Observações</span><textarea name="notes" placeholder="Informe ocorrências, produtos aplicados ou recomendações"></textarea></div></div><div class="form-section"><h3>Fotos do Término (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple></div></div><div class="form-actions"><button class="btn primary" type="submit">Finalizar Serviço</button></div>`;}
+function completeServiceForm(m){return `<div class="info">Serviço iniciado em ${brDate(m.started_at)} por ${esc(m.executor)} na ${esc(m.pool_name)}.</div><div class="form-section"><h3>Medições Químicas</h3><div class="form-grid"><div class="field"><span>pH *</span><input name="ph" type="number" min="0" max="14" step="0.1" required><small class="chemical-reference">Referência ideal: 7,2 a 7,6</small></div><div class="field"><span>Cloro Livre (ppm) *</span><input name="chlorine" type="number" min="0" step="0.1" required><small class="chemical-reference">Referência ideal: 1 a 3 ppm</small></div><div class="field"><span>Alcalinidade (ppm) *</span><input name="alkalinity" type="number" min="0" step="1" required><small class="chemical-reference">Referência ideal: 80 a 120 ppm</small></div><div class="field"><span>Estabilizador / Ácido Cianúrico (ppm) *</span><input name="stabilizer" type="number" min="0" step="1" required><small class="chemical-reference">Ideal: 30 a 50 ppm · Piscina de sal: 60 a 80 ppm</small></div></div></div><div class="form-section"><h3>Serviços Executados</h3><div class="checkboxes">${['Limpeza Superficial','Aspiração','Limpeza de Borda','Retrolavagem do Filtro','Tratamento Químico','Verificação dos Equipamentos'].map(s=>`<label class="check"><input type="checkbox" name="services" value="${s}">${s}</label>`).join('')}</div></div><div class="form-section"><div class="field"><span>Problemas encontrados</span><textarea name="problems_found" id="problemsFound" placeholder="Descreva os problemas identificados durante o serviço"></textarea></div><label class="check quote-toggle"><input type="checkbox" name="generate_quote" id="generateQuote" disabled> Gerar orçamento para este problema</label><div id="quoteSection" class="quote-section hidden"><div class="quote-head"><div><h3>Itens do orçamento</h3><small>Informe a descrição e o valor de cada item.</small></div><button type="button" class="btn secondary" id="addQuoteItem">＋ Adicionar item</button></div><div id="quoteItems" class="quote-items"></div><div class="quote-total"><span>Valor total</span><strong id="quoteTotal">R$ 0,00</strong></div></div></div><div class="form-section"><div class="field"><span>Observações</span><textarea name="notes" placeholder="Esta observação será usada como descrição do orçamento"></textarea></div></div><div class="form-section"><h3>Fotos do Término (Opcional)</h3><div class="field"><input name="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple></div></div><div class="form-actions"><button class="btn primary" type="submit">Finalizar Serviço</button></div>`;}
+
+function quoteMoneyValue(value){
+  let text=String(value||'').trim().replace(/[^\d,.-]/g,'');
+  if(text.includes(','))text=text.replace(/\./g,'').replace(',','.');
+  const number=Number(text);
+  return Number.isFinite(number)?Math.round(number*100)/100:NaN;
+}
+
+function quoteItemRow(){return `<div class="quote-item-row"><input data-quote-description placeholder="Descrição do item"><input data-quote-value inputmode="decimal" placeholder="Valor (R$)"><button type="button" class="btn danger" data-remove-quote-item>Remover</button></div>`;}
+
+function updateQuoteTotal(){
+  const total=$$('.quote-item-row').reduce((sum,row)=>{const value=quoteMoneyValue($('[data-quote-value]',row).value);return sum+(Number.isFinite(value)?value:0);},0);
+  $('#quoteTotal').textContent=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(total);
+}
+
+function bindQuoteForm(){
+  const problem=$('#problemsFound'),toggle=$('#generateQuote'),section=$('#quoteSection'),items=$('#quoteItems');
+  const syncAvailability=()=>{
+    toggle.disabled=!problem.value.trim();
+    if(toggle.disabled){toggle.checked=false;section.classList.add('hidden');items.innerHTML='';updateQuoteTotal();}
+  };
+  problem.addEventListener('input',syncAvailability);
+  toggle.addEventListener('change',()=>{
+    section.classList.toggle('hidden',!toggle.checked);
+    if(toggle.checked&&!items.children.length)items.insertAdjacentHTML('beforeend',quoteItemRow());
+    updateQuoteTotal();
+  });
+  $('#addQuoteItem').onclick=()=>{items.insertAdjacentHTML('beforeend',quoteItemRow());};
+  items.addEventListener('click',event=>{const button=event.target.closest('[data-remove-quote-item]');if(button){button.closest('.quote-item-row').remove();if(!items.children.length)items.insertAdjacentHTML('beforeend',quoteItemRow());updateQuoteTotal();}});
+  items.addEventListener('input',updateQuoteTotal);
+  syncAvailability();
+}
 
 async function startService(e){e.preventDefault();const form=e.currentTarget,btn=form.querySelector('button[type=submit]');try{btn.disabled=true;await api('/api/maintenances/start',{method:'POST',body:new FormData(form)});await refreshActiveService();toast('Serviço iniciado.');renderService();}catch(err){toast(err.message,true);}finally{btn.disabled=false;}}
-async function completeService(e,id){e.preventDefault();const form=e.currentTarget,fd=new FormData(form),btn=form.querySelector('button[type=submit]');fd.set('services',JSON.stringify($$('input[name=services]:checked',form).map(i=>i.value)));try{btn.disabled=true;btn.textContent='Finalizando serviço...';await api(`/api/maintenances/${id}/complete`,{method:'POST',body:fd});await refreshActiveService();toast('Serviço finalizado com sucesso.');go('/dashboard');}catch(err){toast(err.message,true);}finally{btn.disabled=false;btn.textContent='Finalizar Serviço';}}
+async function completeService(e,id){
+  e.preventDefault();
+  const form=e.currentTarget,fd=new FormData(form),btn=form.querySelector('button[type=submit]');
+  const generateQuote=$('#generateQuote',form)?.checked===true;
+  fd.set('services',JSON.stringify($$('input[name=services]:checked',form).map(i=>i.value)));
+  fd.set('generate_quote',String(generateQuote));
+  if(generateQuote){
+    const quoteItems=$$('.quote-item-row',form).map(row=>({description:$('[data-quote-description]',row).value.trim(),value:quoteMoneyValue($('[data-quote-value]',row).value)}));
+    if(!quoteItems.length||quoteItems.some(item=>!item.description||!Number.isFinite(item.value)||item.value<=0)){toast('Informe a descrição e um valor maior que zero para cada item do orçamento.',true);return;}
+    fd.set('quote_items',JSON.stringify(quoteItems));
+  }
+  const quoteWindow=generateQuote?window.open('about:blank','_blank'):null;
+  if(quoteWindow){quoteWindow.document.write('<p style="font-family:Arial;padding:24px">Gerando orçamento...</p>');quoteWindow.document.close();}
+  try{
+    btn.disabled=true;btn.textContent=generateQuote?'Finalizando e gerando orçamento...':'Finalizando serviço...';
+    const result=await api(`/api/maintenances/${id}/complete`,{method:'POST',body:fd});
+    if(result.quote_url){if(quoteWindow)quoteWindow.location.href=result.quote_url;else window.open(result.quote_url,'_blank');}
+    else if(quoteWindow)quoteWindow.close();
+    await refreshActiveService();toast(generateQuote?'Serviço finalizado e orçamento gerado.':'Serviço finalizado com sucesso.');go('/dashboard');
+  }catch(err){if(quoteWindow)quoteWindow.close();toast(err.message,true);}
+  finally{btn.disabled=false;btn.textContent='Finalizar Serviço';}
+}
 
 async function renderPools(){ state.pools=await api(`/api/pools${state.locationId?`?location_id=${state.locationId}`:''}`);$('#mainContent').innerHTML=`<div class="page"><button class="btn outline back-button" data-go="/dashboard">← Voltar</button><div class="page-head"><div><h1>Gerenciar Piscinas</h1><p>Cadastre e gerencie as piscinas do condomínio</p></div>${canManageLocalData()?'<button id="newPool" class="btn primary">＋ Nova Piscina</button>':''}</div><div class="cards-list">${state.pools.map(poolCard).join('')||'<div class="panel empty">Nenhuma piscina cadastrada.</div>'}</div></div>`;bindRoutes();if($('#newPool'))$('#newPool').onclick=()=>poolModal();$$('[data-edit-pool]').forEach(b=>b.onclick=()=>poolModal(state.pools.find(p=>p.id===b.dataset.editPool)));$$('[data-disable-pool]').forEach(b=>b.onclick=()=>disablePool(b.dataset.disablePool));}
 function poolCard(p){return `<article class="item-card"><div class="item-main"><h3>${esc(p.name)} - ${esc(p.location_name)}</h3><div class="item-meta"><span class="badge ${p.is_active?'':'off'}">${p.is_active?'Ativa':'Inativa'}</span><span>${esc(p.pool_location||'Local não informado')}</span><span>${liters(p.volume_liters)}</span></div></div>${canManageLocalData()?`<div class="actions"><button class="btn outline" data-edit-pool="${p.id}">Editar</button><button class="btn danger" data-disable-pool="${p.id}">Desativar</button></div>`:''}</article>`;}

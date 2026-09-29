@@ -160,6 +160,8 @@ Ao finalizar um serviço, o campo opcional `Problemas encontrados` permite regis
 
 A versão 1.2.1 desativa o cache dos arquivos JavaScript, CSS e HTML para impedir que a tela antiga continue ativa após um deploy. Ela também corrige automaticamente o registro de 24/09/2026 em que o texto `Pequeno vazamento na tubulação do motor` foi salvo em Observações, movendo-o para Problemas encontrados.
 
+A versão 1.3.0 permite gerar um orçamento quando uma manutenção possui problemas encontrados. O usuário informa os itens e valores, o sistema calcula o total e abre um PDF para impressão após finalizar o serviço. O orçamento fica vinculado à manutenção, ao local e à piscina, e pode ser aberto novamente nos detalhes da manutenção.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
