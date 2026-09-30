@@ -1276,7 +1276,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (/\.(?:html|js|css)$/i.test(filePath)) {
+    if (/\.(?:html|js|css|webmanifest)$/i.test(filePath)) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
