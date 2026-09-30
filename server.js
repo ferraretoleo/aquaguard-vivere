@@ -118,12 +118,13 @@ function canAccessLocation(req, locationId) {
 
 function itineraryScope(req, alias, params) {
   if (isGlobalAdmin(req.user)) return null;
+  let responsibleScope = '';
   if (req.user.role === ROLE_USER) {
     params.push(req.user.id);
-    return `${alias}.responsible_user_id=$${params.length}`;
+    responsibleScope = `${alias}.responsible_user_id=$${params.length} AND `;
   }
   params.push(req.user.location_ids || []);
-  return `(
+  return `(${responsibleScope}
     EXISTS(SELECT 1 FROM itinerary_stops scope_stops WHERE scope_stops.itinerary_id=${alias}.id)
     AND NOT EXISTS(
       SELECT 1 FROM itinerary_stops outside_stops

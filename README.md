@@ -180,6 +180,8 @@ A versão 1.7.1 separa o criador do itinerário do usuário responsável. Usuár
 
 Em instalações existentes, a atualização é automática na inicialização. Para executar manualmente, use `migrar_responsavel_itinerario.sql` no banco Neon.
 
+A versão 1.7.2 reforça o isolamento dos itinerários usando os vínculos atuais. Administrador local e usuário só veem uma rota quando todos os locais dela estão dentro dos locais aos quais continuam associados. A regra vale para dashboard, menu de itinerários, relatórios, detalhes, visitas sem serviço e início da manutenção. Se um vínculo com um local for removido, as rotas daquele local deixam de ficar disponíveis para o perfil.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
