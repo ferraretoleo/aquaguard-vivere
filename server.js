@@ -262,12 +262,8 @@ async function canUsePaymentPlan(req, paymentPlanId) {
   if (!paymentPlanId) return true;
   if (isGlobalAdmin(req.user)) return Boolean((await pool.query(`SELECT 1 FROM payment_plans WHERE id=$1`, [paymentPlanId])).rows[0]);
   const result = await pool.query(
-    `SELECT 1 FROM payment_plans pp
-     WHERE pp.id=$1 AND (
-       pp.created_by=$2 OR EXISTS(
-         SELECT 1 FROM locations l WHERE l.payment_plan_id=pp.id AND l.id=ANY($3::uuid[])
-       )
-     )`, [paymentPlanId, req.user.id, req.user.location_ids || []]
+    `SELECT 1 FROM payment_plans WHERE id=$1 AND created_by=$2`,
+    [paymentPlanId, req.user.id]
   );
   return Boolean(result.rows[0]);
 }
@@ -704,8 +700,8 @@ app.get('/api/payment-plans', requireLocalManager, asyncRoute(async (req, res) =
     : await pool.query(
       `SELECT pp.*,u.name AS created_by_name,count(DISTINCT l.id)::int AS locations_count
        FROM payment_plans pp JOIN users u ON u.id=pp.created_by
-       LEFT JOIN locations l ON l.payment_plan_id=pp.id
-       WHERE pp.created_by=$1 OR l.id=ANY($2::uuid[])
+       LEFT JOIN locations l ON l.payment_plan_id=pp.id AND l.id=ANY($2::uuid[])
+       WHERE pp.created_by=$1
        GROUP BY pp.id,u.name ORDER BY pp.name`, [req.user.id, req.user.location_ids || []]
     );
   res.json(result.rows);

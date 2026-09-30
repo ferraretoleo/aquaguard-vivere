@@ -182,6 +182,8 @@ Em instalações existentes, a atualização é automática na inicialização. 
 
 A versão 1.7.2 reforça o isolamento dos itinerários usando os vínculos atuais. Administrador local e usuário só veem uma rota quando todos os locais dela estão dentro dos locais aos quais continuam associados. A regra vale para dashboard, menu de itinerários, relatórios, detalhes, visitas sem serviço e início da manutenção. Se um vínculo com um local for removido, as rotas daquele local deixam de ficar disponíveis para o perfil.
 
+A versão 1.7.3 isola os Planos de pagamento pelo usuário Administrador Local que os criou. Cada administrador local lista, edita, desativa e associa somente os próprios planos aos seus locais. Um plano não fica disponível para outro administrador local, mesmo que ele tente informar o identificador diretamente na API. O Administrador Geral continua vendo e administrando todos os planos.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
