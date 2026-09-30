@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS locations (
   contract_value numeric(12,2),
   payment_method varchar(40),
   payment_type varchar(20),
+  payment_due_day smallint,
   monthly_amount numeric(12,2),
   installment_count integer,
   installment_amount numeric(12,2),
@@ -38,6 +39,7 @@ ALTER TABLE locations ADD COLUMN IF NOT EXISTS payment_plan_id uuid;
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS contract_value numeric(12,2);
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS payment_method varchar(40);
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS payment_type varchar(20);
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS payment_due_day smallint;
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS monthly_amount numeric(12,2);
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS installment_count integer;
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS installment_amount numeric(12,2);
@@ -95,6 +97,10 @@ ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_payment_type_check;
 ALTER TABLE locations
   ADD CONSTRAINT locations_payment_type_check
   CHECK (payment_type IS NULL OR payment_type IN ('MONTHLY','INSTALLMENTS'));
+ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_payment_due_day_check;
+ALTER TABLE locations
+  ADD CONSTRAINT locations_payment_due_day_check
+  CHECK (payment_due_day IS NULL OR payment_due_day BETWEEN 1 AND 31);
 ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_contract_values_check;
 ALTER TABLE locations
   ADD CONSTRAINT locations_contract_values_check

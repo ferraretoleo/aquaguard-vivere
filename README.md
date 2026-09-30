@@ -184,6 +184,8 @@ A versão 1.7.2 reforça o isolamento dos itinerários usando os vínculos atuai
 
 A versão 1.7.3 isola os Planos de pagamento pelo usuário Administrador Local que os criou. Cada administrador local lista, edita, desativa e associa somente os próprios planos aos seus locais. Um plano não fica disponível para outro administrador local, mesmo que ele tente informar o identificador diretamente na API. O Administrador Geral continua vendo e administrando todos os planos.
 
+A versão 1.7.4 adiciona o dia de vencimento aos dados do contrato de cada Local. O valor total do contrato passa a aceitar 0, exibido como "Sem valor de contrato", para os casos em que existe cobrança mensal ou parcelada, mas não existe um valor total contratual definido. O dia de vencimento deve ficar entre 1 e 31. A atualização do banco é automática; para execução manual, use `migrar_vencimento_contratos.sql`.
+
 A migração é automática quando a nova versão inicia no Render. O arquivo `migrar_usuarios_multilocais.sql` também está incluído para aplicação manual pelo SQL Editor do Neon, caso seja necessário preparar o banco antes da publicação.
 
 O login Google somente aceita e-mails previamente cadastrados pelo administrador nessa página. Isso impede a criação automática de usuários sem local definido.
