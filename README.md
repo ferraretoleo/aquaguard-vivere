@@ -199,3 +199,11 @@ O login Google somente aceita e-mails previamente cadastrados pelo administrador
 - Cadastros de locais e piscinas permitidos ao administrador geral e ao administrador local, sempre respeitando os locais associados
 - Queries parametrizadas
 - Limite de tamanho e tipo para fotos
+
+## Versão 1.8.0: mensalidades do AquaGuard
+
+Em `/usuarios`, o administrador geral pode ativar o controle de assinatura de cada administrador local, escolher Piscina (1 piscina, R$ 29,90), Condomínio (até 3, R$ 49,90), Profissional (até 10, R$ 109,90) ou Empresa (acima de 10, R$ 209,90), ajustar a mensalidade contratada e definir o dia do vencimento. Os limites são informativos e não bloqueiam cadastros. Este controle não altera os contratos e planos de pagamento dos locais.
+
+O botão Mensalidades abre o histórico e registra competência, data do pagamento, valor recebido e observações. Existe um lançamento por competência; para corrigir, remova e registre novamente. Não há cobrança automática ou suspensão de acesso. Desativar a assinatura ou mudar o perfil preserva o histórico no banco. Todas as rotas de assinatura e pagamentos são exclusivas do administrador geral.
+
+As tabelas são criadas automaticamente ao iniciar a aplicação. Para aplicar manualmente no Neon, execute `migrar_mensalidades_usuarios.sql`. O script de limpeza foi atualizado para incluir estes dados.

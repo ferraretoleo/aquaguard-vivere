@@ -197,6 +197,7 @@ async function ensureLocationsExist(locationIds) {
 async function userRecord(userId) {
   const result = await pool.query(
     `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,
+            (SELECT row_to_json(s) FROM user_subscriptions s WHERE s.user_id=u.id) AS subscription,
             COALESCE(array_agg(l.id ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL),'{}'::uuid[]) AS location_ids,
             COALESCE(json_agg(json_build_object('id',l.id,'name',l.name) ORDER BY l.name)
               FILTER (WHERE l.id IS NOT NULL),'[]'::json) AS locations
@@ -600,9 +601,27 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
 
 app.use('/api', requireAuth);
 
+const SUBSCRIPTION_PLANS = ['PISCINA','CONDOMINIO','PROFISSIONAL','EMPRESA'];
+function subscriptionInput(body, role) {
+  if (role !== ROLE_LOCAL_ADMIN || !body.subscription) return null;
+  const {plan, monthly_amount, due_day} = body.subscription;
+  const amount = Number(monthly_amount), day = Number(due_day);
+  if (!SUBSCRIPTION_PLANS.includes(plan) || monthly_amount === '' || monthly_amount == null || !Number.isFinite(amount) || amount < 0 || amount > 9999999999.99 || !Number.isInteger(day) || day < 1 || day > 31) {
+    const error = new Error('Informe plano, mensalidade válida e vencimento entre 1 e 31.'); error.status = 400; throw error;
+  }
+  return {plan, amount, day};
+}
+async function saveSubscription(client, userId, subscription) {
+  if (!subscription) return client.query('DELETE FROM user_subscriptions WHERE user_id=$1', [userId]);
+  await client.query(`INSERT INTO user_subscriptions(user_id,plan,monthly_amount,due_day) VALUES($1,$2,$3,$4)
+    ON CONFLICT(user_id) DO UPDATE SET plan=$2,monthly_amount=$3,due_day=$4,updated_at=now()`,
+    [userId, subscription.plan, subscription.amount, subscription.day]);
+}
+
 app.get('/api/users', requireAdmin, asyncRoute(async (_req, res) => {
   const result = await pool.query(
     `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,
+            (SELECT row_to_json(s) FROM user_subscriptions s WHERE s.user_id=u.id) AS subscription,
             COALESCE(array_agg(l.id ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL),'{}'::uuid[]) AS location_ids,
             COALESCE(json_agg(json_build_object('id',l.id,'name',l.name) ORDER BY l.name)
               FILTER (WHERE l.id IS NOT NULL),'[]'::json) AS locations
@@ -620,6 +639,7 @@ app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const role = [ROLE_ADMIN, ROLE_LOCAL_ADMIN, ROLE_USER].includes(req.body.role) ? req.body.role : ROLE_USER;
+  const subscription = subscriptionInput(req.body, role);
   const locationIds = role === ROLE_ADMIN ? [] : normalizeLocationIds(req.body.location_ids || req.body.location_id);
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
   if (role !== ROLE_ADMIN && !locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local para o usuário.' });
@@ -638,6 +658,7 @@ app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
     for (const locationId of locationIds) {
       await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)`, [result.rows[0].id, locationId]);
     }
+    await saveSubscription(client, result.rows[0].id, subscription);
     await client.query('COMMIT');
     res.status(201).json(await userRecord(result.rows[0].id));
   } catch (error) {
@@ -653,6 +674,7 @@ app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   const role = [ROLE_ADMIN, ROLE_LOCAL_ADMIN, ROLE_USER].includes(req.body.role) ? req.body.role : ROLE_USER;
+  const subscription = subscriptionInput(req.body, role);
   const locationIds = role === ROLE_ADMIN ? [] : normalizeLocationIds(req.body.location_ids || req.body.location_id);
   const isSelf = req.params.id === req.user.id;
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
@@ -681,6 +703,7 @@ app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
     for (const locationId of locationIds) {
       await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)`, [req.params.id, locationId]);
     }
+    await saveSubscription(client, req.params.id, subscription);
     await client.query('COMMIT');
     res.json(await userRecord(req.params.id));
   } catch (error) {
@@ -689,6 +712,29 @@ app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   } finally {
     client.release();
   }
+}));
+
+app.get('/api/users/:id/subscription-payments', requireAdmin, asyncRoute(async (req,res) => {
+  const result = await pool.query('SELECT id,competence,paid_on,amount,notes FROM subscription_payments WHERE user_id=$1 ORDER BY competence DESC', [req.params.id]);
+  res.json(result.rows);
+}));
+app.post('/api/users/:id/subscription-payments', requireAdmin, asyncRoute(async (req,res) => {
+  const {competence,paid_on} = req.body;
+  const amount = Number(req.body.amount);
+  const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value;
+  if (!/^\d{4}-\d{2}$/.test(String(competence)) || !validDate(`${competence}-01`) || !validDate(paid_on) || !Number.isFinite(amount) || amount <= 0 || amount > 9999999999.99) return res.status(400).json({error:'Informe competência, data e valor pago válidos.'});
+  const result = await pool.query(`INSERT INTO subscription_payments(user_id,competence,paid_on,amount,notes,created_by)
+    SELECT u.id,$2::date,$3::date,$4,$5,$6 FROM users u JOIN user_subscriptions s ON s.user_id=u.id
+    WHERE u.id=$1 AND u.role='LOCAL_ADMIN'
+    ON CONFLICT(user_id,competence) DO NOTHING RETURNING id`,
+    [req.params.id,`${competence}-01`,paid_on,amount,String(req.body.notes||'').trim().slice(0,2000),req.user.id]);
+  if (!result.rowCount) return res.status(409).json({error:'Já existe pagamento para este mês ou o usuário não tem assinatura de administrador local.'});
+  res.status(201).json(result.rows[0]);
+}));
+app.delete('/api/users/:id/subscription-payments/:paymentId', requireAdmin, asyncRoute(async(req,res) => {
+  const result = await pool.query('DELETE FROM subscription_payments WHERE id=$1 AND user_id=$2 RETURNING id',[req.params.paymentId,req.params.id]);
+  if (!result.rowCount) return res.status(404).json({error:'Pagamento não encontrado.'});
+  res.json({ok:true});
 }));
 
 app.get('/api/payment-plans', requireLocalManager, asyncRoute(async (req, res) => {
@@ -1276,7 +1322,7 @@ app.post('/api/reports/evolution/email', asyncRoute(async (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, filePath) {
-    if (/\.(?:html|js|css)$/i.test(filePath)) {
+    if (/\.(?:html|js|css|webmanifest)$/i.test(filePath)) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
