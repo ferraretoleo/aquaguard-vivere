@@ -1,0 +1,14 @@
+AquaGuard completo, versão 1.8.0
+
+Inclui a aplicação, controle de mensalidades, ícones para celular, scripts SQL, Worker Cloudflare e site de divulgação na pasta site.
+
+Atualização da aplicação existente:
+1. Extraia o ZIP e envie os arquivos para a raiz do repositório mantendo as pastas public e scripts.
+2. Preserve as variáveis de ambiente já configuradas na Render, principalmente DATABASE_URL e JWT_SECRET.
+3. Na Render: Build Command npm ci; Start Command npm start. Faça o deploy do commit atualizado.
+4. As tabelas de mensalidades são criadas automaticamente na inicialização. Não execute os scripts limpar_*.sql durante a atualização.
+5. Acesse /usuarios com o administrador geral para configurar as assinaturas e registrar pagamentos.
+
+Para instalação nova, siga README.md e .env.example. O banco fica no Neon, a aplicação na Render e o proxy no Cloudflare. O arquivo cloudflare-worker.js é o proxy da aplicação. A pasta site contém o site de divulgação separado.
+
+As dependências são instaladas por npm ci e não estão no ZIP. O pacote não contém senhas de produção nem cópia dos dados do Neon.
