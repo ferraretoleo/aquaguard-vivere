@@ -47,6 +47,7 @@ function publicUser(row) {
     name: row.name,
     email: row.email,
     role: row.role,
+    local_admin_id: row.local_admin_id || null,
     location_id: locationIds[0] || null,
     location_ids: locationIds
   };
@@ -56,7 +57,11 @@ async function userWithLocations(userId) {
   const result = await pool.query(
     `SELECT u.*,
             COALESCE(array_agg(ul.location_id ORDER BY ul.created_at)
-              FILTER (WHERE ul.location_id IS NOT NULL),'{}'::uuid[]) AS location_ids
+              FILTER (WHERE ul.location_id IS NOT NULL AND (u.role<>'USER' OR EXISTS(
+                SELECT 1 FROM users manager JOIN user_locations manager_ul ON manager_ul.user_id=manager.id
+                WHERE manager.id=u.local_admin_id AND manager.role='LOCAL_ADMIN' AND manager.is_active=true
+                  AND manager_ul.location_id=ul.location_id
+              ))),'{}'::uuid[]) AS location_ids
      FROM users u
      LEFT JOIN user_locations ul ON ul.user_id=u.id
      WHERE u.id=$1
@@ -81,6 +86,7 @@ async function requireAuth(req, res, next) {
     const decoded = jwt.verify(req.cookies.aquaguard_token || '', JWT_SECRET);
     const user = await userWithLocations(decoded.id);
     if (!user?.is_active) return res.status(401).json({ error: 'Usuário inativo ou não encontrado.' });
+    if (user.role === ROLE_USER && !user.location_ids?.length) return res.status(403).json({ error: 'Seu usuário precisa estar vinculado a um administrador local ativo e a um local autorizado. Solicite o ajuste ao administrador geral.' });
     req.user = publicUser(user);
     next();
   } catch {
@@ -123,6 +129,10 @@ function itineraryScope(req, alias, params) {
     params.push(req.user.id);
     responsibleScope = `${alias}.responsible_user_id=$${params.length} AND `;
   }
+  if (req.user.role === ROLE_LOCAL_ADMIN) {
+    params.push(req.user.id);
+    responsibleScope = `(${alias}.responsible_user_id=$${params.length} OR EXISTS(SELECT 1 FROM users route_user WHERE route_user.id=${alias}.responsible_user_id AND route_user.role='USER' AND route_user.local_admin_id=$${params.length})) AND `;
+  }
   params.push(req.user.location_ids || []);
   return `(${responsibleScope}
     EXISTS(SELECT 1 FROM itinerary_stops scope_stops WHERE scope_stops.itinerary_id=${alias}.id)
@@ -155,8 +165,8 @@ async function itineraryResponsible(req, requestedUserId, locationIds) {
   if (!target?.is_active) { const error = new Error('Selecione um usuário ativo para o itinerário.'); error.status = 400; throw error; }
   const targetLocations = Array.isArray(target.location_ids) ? target.location_ids.map(String) : [];
   if (req.user.role === ROLE_LOCAL_ADMIN && targetId !== String(req.user.id)) {
-    const shared = target.role !== ROLE_ADMIN && targetLocations.some(id => (req.user.location_ids || []).includes(id));
-    if (!shared) { const error = new Error('O usuário escolhido não está associado aos mesmos locais deste administrador.'); error.status = 403; throw error; }
+    const shared = target.role === ROLE_USER && String(target.local_admin_id) === String(req.user.id) && targetLocations.some(id => (req.user.location_ids || []).includes(id));
+    if (!shared) { const error = new Error('O usuário escolhido deve estar vinculado a este administrador local e aos locais da rota.'); error.status = 403; throw error; }
   }
   if (locationIds.some(id => !canAccessLocation(req, id))) {
     const error = new Error('Um ou mais locais não estão disponíveis para este administrador.'); error.status = 403; throw error;
@@ -196,7 +206,8 @@ async function ensureLocationsExist(locationIds) {
 
 async function userRecord(userId) {
   const result = await pool.query(
-    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,
+    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,u.local_admin_id,
+            (SELECT manager.name FROM users manager WHERE manager.id=u.local_admin_id) AS local_admin_name,
             (SELECT row_to_json(s) FROM user_subscriptions s WHERE s.user_id=u.id) AS subscription,
             COALESCE(array_agg(l.id ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL),'{}'::uuid[]) AS location_ids,
             COALESCE(json_agg(json_build_object('id',l.id,'name',l.name) ORDER BY l.name)
@@ -601,6 +612,15 @@ app.get('/auth/google/callback', asyncRoute(async (req, res) => {
 
 app.use('/api', requireAuth);
 
+async function validateLocalAdmin(role, requestedId, locationIds) {
+  if (role !== ROLE_USER) return null;
+  if (!validUuid(requestedId)) { const error = new Error('Selecione o administrador local responsável pelo usuário.'); error.status=400; throw error; }
+  const manager = await userWithLocations(requestedId);
+  if (!manager?.is_active || manager.role !== ROLE_LOCAL_ADMIN) { const error = new Error('Selecione um administrador local ativo.'); error.status=400; throw error; }
+  if (locationIds.some(id => !manager.location_ids.includes(id))) { const error = new Error('O usuário só pode ser vinculado aos locais do administrador local responsável.'); error.status=403; throw error; }
+  return String(requestedId);
+}
+
 const SUBSCRIPTION_PLANS = ['PISCINA','CONDOMINIO','PROFISSIONAL','EMPRESA'];
 function subscriptionInput(body, role) {
   if (role !== ROLE_LOCAL_ADMIN || !body.subscription) return null;
@@ -620,7 +640,8 @@ async function saveSubscription(client, userId, subscription) {
 
 app.get('/api/users', requireAdmin, asyncRoute(async (_req, res) => {
   const result = await pool.query(
-    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,
+    `SELECT u.id,u.name,u.email,u.role,u.is_active,u.created_at,u.updated_at,u.local_admin_id,
+            (SELECT manager.name FROM users manager WHERE manager.id=u.local_admin_id) AS local_admin_name,
             (SELECT row_to_json(s) FROM user_subscriptions s WHERE s.user_id=u.id) AS subscription,
             COALESCE(array_agg(l.id ORDER BY l.name) FILTER (WHERE l.id IS NOT NULL),'{}'::uuid[]) AS location_ids,
             COALESCE(json_agg(json_build_object('id',l.id,'name',l.name) ORDER BY l.name)
@@ -641,6 +662,7 @@ app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
   const role = [ROLE_ADMIN, ROLE_LOCAL_ADMIN, ROLE_USER].includes(req.body.role) ? req.body.role : ROLE_USER;
   const subscription = subscriptionInput(req.body, role);
   const locationIds = role === ROLE_ADMIN ? [] : normalizeLocationIds(req.body.location_ids || req.body.location_id);
+  const localAdminId = await validateLocalAdmin(role, req.body.local_admin_id, locationIds);
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
   if (role !== ROLE_ADMIN && !locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local para o usuário.' });
   if (!(await ensureLocationsExist(locationIds))) return res.status(400).json({ error: 'Um dos locais selecionados não existe.' });
@@ -650,10 +672,10 @@ app.post('/api/users', requireAdmin, asyncRoute(async (req, res) => {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `INSERT INTO users(name,email,password_hash,role,is_active,location_id)
-       VALUES($1,$2,$3,$4,$5,$6)
+      `INSERT INTO users(name,email,password_hash,role,is_active,location_id,local_admin_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7)
        RETURNING id`,
-      [name, email, hash, role, req.body.is_active !== false, locationIds[0] || null]
+      [name, email, hash, role, req.body.is_active !== false, locationIds[0] || null, localAdminId]
     );
     for (const locationId of locationIds) {
       await client.query(`INSERT INTO user_locations(user_id,location_id) VALUES($1,$2)`, [result.rows[0].id, locationId]);
@@ -676,6 +698,7 @@ app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const role = [ROLE_ADMIN, ROLE_LOCAL_ADMIN, ROLE_USER].includes(req.body.role) ? req.body.role : ROLE_USER;
   const subscription = subscriptionInput(req.body, role);
   const locationIds = role === ROLE_ADMIN ? [] : normalizeLocationIds(req.body.location_ids || req.body.location_id);
+  const localAdminId = await validateLocalAdmin(role, req.body.local_admin_id, locationIds);
   const isSelf = req.params.id === req.user.id;
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Informe um nome e um e-mail válidos.' });
   if (role !== ROLE_ADMIN && !locationIds.length) return res.status(400).json({ error: 'Selecione pelo menos um local para o usuário.' });
@@ -690,10 +713,10 @@ app.put('/api/users/:id', requireAdmin, asyncRoute(async (req, res) => {
       `UPDATE users
        SET name=$1,email=$2,role=$3,is_active=$4,location_id=$5,
            password_hash=CASE WHEN $6::text IS NULL THEN password_hash ELSE $6 END,
-           updated_at=now()
+           local_admin_id=$8,updated_at=now()
        WHERE id=$7
        RETURNING id`,
-      [name, email, role, req.body.is_active !== false, locationIds[0] || null, hash, req.params.id]
+      [name, email, role, req.body.is_active !== false, locationIds[0] || null, hash, req.params.id, localAdminId]
     );
     if (!result.rows[0]) {
       await client.query('ROLLBACK');
@@ -863,7 +886,7 @@ app.get('/api/itinerary-users', asyncRoute(async (req, res) => {
     conditions.push(`u.id=$${params.length}`);
   } else if (req.user.role === ROLE_LOCAL_ADMIN) {
     params.push(req.user.id, req.user.location_ids || []);
-    conditions.push(`(u.id=$1 OR (u.role<>'ADMIN' AND EXISTS(
+    conditions.push(`(u.id=$1 OR (u.role='USER' AND u.local_admin_id=$1 AND EXISTS(
       SELECT 1 FROM user_locations shared_ul
       WHERE shared_ul.user_id=u.id AND shared_ul.location_id=ANY($2::uuid[])
     )))`);
@@ -871,7 +894,11 @@ app.get('/api/itinerary-users', asyncRoute(async (req, res) => {
   const result = await pool.query(
     `SELECT u.id,u.name,u.email,u.role,
             COALESCE(array_agg(ul.location_id ORDER BY ul.created_at)
-              FILTER (WHERE ul.location_id IS NOT NULL),'{}'::uuid[]) AS location_ids
+              FILTER (WHERE ul.location_id IS NOT NULL AND (u.role<>'USER' OR EXISTS(
+                SELECT 1 FROM users manager JOIN user_locations manager_ul ON manager_ul.user_id=manager.id
+                WHERE manager.id=u.local_admin_id AND manager.role='LOCAL_ADMIN' AND manager.is_active=true
+                  AND manager_ul.location_id=ul.location_id
+              ))),'{}'::uuid[]) AS location_ids
      FROM users u
      LEFT JOIN user_locations ul ON ul.user_id=u.id
      WHERE ${conditions.join(' AND ')}

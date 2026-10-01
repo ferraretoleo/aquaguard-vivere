@@ -207,3 +207,11 @@ Em `/usuarios`, o administrador geral pode ativar o controle de assinatura de ca
 O botão Mensalidades abre o histórico e registra competência, data do pagamento, valor recebido e observações. Existe um lançamento por competência; para corrigir, remova e registre novamente. Não há cobrança automática ou suspensão de acesso. Desativar a assinatura ou mudar o perfil preserva o histórico no banco. Todas as rotas de assinatura e pagamentos são exclusivas do administrador geral.
 
 As tabelas são criadas automaticamente ao iniciar a aplicação. Para aplicar manualmente no Neon, execute `migrar_mensalidades_usuarios.sql`. O script de limpeza foi atualizado para incluir estes dados.
+
+## Versão 1.8.1: usuários vinculados ao administrador local
+
+Cada usuário comum deve ter um administrador local responsável, escolhido pelo administrador geral em /usuarios. Seus locais devem pertencer ao responsável. A cada requisição, a aplicação verifica o vínculo atual e usa somente a interseção dos locais do usuário e do administrador ativo. Sem vínculo válido, o acesso aos dados é negado, inclusive em sessões antigas. Alterar locais ou desativar o responsável retira os acessos correspondentes imediatamente.
+
+O administrador local só seleciona os próprios usuários em itinerários, além de si mesmo, e visualiza rotas cujo responsável é ele ou um usuário seu e cujos locais estão todos autorizados. O administrador geral mantém acesso global.
+
+A migração migrar_vinculo_administrador_local.sql é aplicada automaticamente na inicialização. Após atualizar, abra /usuarios como administrador geral, edite cada usuário comum e selecione seu responsável e locais. Não há associação automática de usuários existentes. Os usuários sem vínculo precisam desse ajuste para voltar a acessar os dados. Este vínculo não transfere locais, contratos ou planos de pagamento.

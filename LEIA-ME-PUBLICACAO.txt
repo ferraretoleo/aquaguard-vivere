@@ -1,14 +1,12 @@
-AquaGuard completo, versão 1.8.0
+AquaGuard completo 1.8.1
 
-Inclui a aplicação, controle de mensalidades, ícones para celular, scripts SQL, Worker Cloudflare e site de divulgação na pasta site.
+1. Substitua os arquivos no repositório mantendo as pastas.
+2. Preserve as variáveis de ambiente da Render, principalmente DATABASE_URL e JWT_SECRET. Build: npm ci. Start: npm start. Faça o deploy.
+3. As tabelas e o campo local_admin_id são criados automaticamente na inicialização. Não execute os scripts limpar_*.sql para atualizar.
+4. Acesse /usuarios como administrador geral. Edite cada usuário comum, escolha o Administrador Local responsável e selecione os locais autorizados. Salve.
 
-Atualização da aplicação existente:
-1. Extraia o ZIP e envie os arquivos para a raiz do repositório mantendo as pastas public e scripts.
-2. Preserve as variáveis de ambiente já configuradas na Render, principalmente DATABASE_URL e JWT_SECRET.
-3. Na Render: Build Command npm ci; Start Command npm start. Faça o deploy do commit atualizado.
-4. As tabelas de mensalidades são criadas automaticamente na inicialização. Não execute os scripts limpar_*.sql durante a atualização.
-5. Acesse /usuarios com o administrador geral para configurar as assinaturas e registrar pagamentos.
+ATENÇÃO: os usuários comuns existentes precisam receber o vínculo para acessar os dados após esta atualização. Não há associação automática. Se o responsável for desativado ou deixar de ter acesso a um local, o usuário perde o acesso correspondente, mesmo com uma sessão aberta.
 
-Para instalação nova, siga README.md e .env.example. O banco fica no Neon, a aplicação na Render e o proxy no Cloudflare. O arquivo cloudflare-worker.js é o proxy da aplicação. A pasta site contém o site de divulgação separado.
+O administrador geral mantém acesso global. Itinerários do administrador local ficam limitados a ele e seus usuários vinculados, sempre respeitando os locais associados. O cadastro de usuários permanece exclusivo do administrador geral. O vínculo não transfere locais nem altera contratos.
 
-As dependências são instaladas por npm ci e não estão no ZIP. O pacote não contém senhas de produção nem cópia dos dados do Neon.
+Inclui controle de mensalidades, ícones para instalação no celular, SQLs, Worker Cloudflare e site de divulgação em site/. Dependências serão instaladas por npm ci. Não contém senhas de produção ou dados do Neon. Veja README.md para demais instruções.
