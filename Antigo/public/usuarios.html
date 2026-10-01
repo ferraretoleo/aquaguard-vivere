@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="/manifest.webmanifest?v=1.8.0">
+  <link rel="icon" type="image/png" href="/icons/aquaguard-32.png?v=1.8.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/aquaguard-180.png?v=1.8.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="AquaGuard">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Usuários | AquaGuard</title>
+  <link rel="stylesheet" href="/styles.css?v=1.8.0">
+  <link rel="stylesheet" href="/usuarios.css?v=1.8.0">
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+  <main class="users-page">
+    <header class="users-header">
+      <div>
+        <a class="back-link" href="/dashboard">← Voltar ao AquaGuard</a>
+        <h1>Gerenciar Usuários</h1>
+        <p>Cadastre os perfis e associe cada usuário a um ou mais locais.</p>
+      </div>
+      <button id="newUser" class="btn primary">＋ Novo Usuário</button>
+    </header>
+    <section class="panel users-panel">
+      <div class="users-toolbar">
+        <input id="userSearch" type="search" placeholder="Pesquisar por nome ou e-mail">
+        <span id="userCount"></span>
+      </div>
+      <div id="usersList" class="users-list"><div class="empty">Carregando...</div></div>
+    </section>
+  </main>
+  <div id="modalRoot"></div>
+  <script src="/usuarios.js?v=1.8.0" defer></script>
+</body>
+</html>

@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AquaGuard | Controle completo da sua piscina</title>
+    <meta name="description" content="Organize medições, produtos, serviços, fotos, manutenções e relatórios da piscina em um só lugar. Planos a partir de R$ 29,90." />
+    <meta name="theme-color" content="#071b25" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Manrope:wght@600;700;800&amp;display=swap" rel="stylesheet" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b786d'/%3E%3Cpath d='M32 11C25 22 17 30 17 40a15 15 0 0 0 30 0c0-10-8-18-15-29Z' fill='%236de9d7'/%3E%3Cpath d='M23 41c3 5 8 7 14 5' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <style>
+      :root {
+        --ink: #09232d;
+        --muted: #516972;
+        --aqua: #16b9a6;
+        --aqua-dark: #087a70;
+        --lime: #b9f17b;
+        --sky: #dff9f6;
+        --line: rgba(9, 35, 45, 0.12);
+        --paper: #f7fbfb;
+        --white: #ffffff;
+        --navy: #071b25;
+        --shadow: 0 24px 70px rgba(0, 44, 55, 0.14);
+        --radius: 24px;
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--paper);
+        font-family: "DM Sans", system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+      }
+      a { color: inherit; text-decoration: none; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      .container { width: min(1160px, calc(100% - 40px)); margin-inline: auto; }
+
+      .topbar {
+        position: absolute;
+        inset: 0 0 auto;
+        z-index: 5;
+        padding: 22px 0;
+        color: white;
+      }
+      .nav { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+      .brand { display: inline-flex; align-items: center; gap: 12px; font: 800 1.25rem/1 "Manrope", sans-serif; }
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        aspect-ratio: 1;
+        border-radius: 14px;
+        color: var(--navy);
+        background: linear-gradient(145deg, #83f2e3, #31c8b6);
+        box-shadow: 0 10px 30px rgba(28, 216, 193, .28);
+        font-size: 1.35rem;
+      }
+      .nav-links { display: flex; align-items: center; gap: 28px; color: #d6e8ea; }
+      .nav-links a { font-size: .94rem; font-weight: 600; }
+      .nav-links a:hover { color: white; }
+      .nav-cta { padding: 11px 18px; border: 1px solid rgba(255,255,255,.24); border-radius: 999px; color: white !important; }
+
+      .hero {
+        position: relative;
+        overflow: hidden;
+        min-height: 760px;
+        color: white;
+        background:
+          radial-gradient(circle at 76% 38%, rgba(34, 214, 191, .22), transparent 30%),
+          radial-gradient(circle at 15% 0%, rgba(36, 145, 171, .16), transparent 28%),
+          var(--navy);
+        padding: 150px 0 110px;
+      }
+      .hero::after {
+        content: "";
+        position: absolute;
+        left: -5%; right: -5%; bottom: -68px;
+        height: 135px;
+        border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+        background: var(--paper);
+      }
+      .hero-grid { display: grid; grid-template-columns: 1.02fr .98fr; gap: 64px; align-items: center; }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 7px 12px;
+        border: 1px solid rgba(109, 233, 215, .26);
+        border-radius: 999px;
+        color: #aaf4e8;
+        background: rgba(25, 186, 166, .08);
+        font-size: .8rem;
+        font-weight: 700;
+        letter-spacing: .09em;
+        text-transform: uppercase;
+      }
+      .eyebrow i { width: 7px; height: 7px; border-radius: 50%; background: #70f0d9; box-shadow: 0 0 18px #70f0d9; }
+      h1, h2, h3 { margin: 0; font-family: "Manrope", sans-serif; letter-spacing: -.035em; }
+      h1 { max-width: 680px; margin-top: 24px; font-size: clamp(3rem, 6vw, 5.25rem); line-height: .99; }
+      .hero h1 span { color: #69e8d5; }
+      .hero-copy { max-width: 650px; margin: 26px 0 0; color: #c5d8dc; font-size: 1.1rem; line-height: 1.75; }
+      .hero-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        min-height: 52px;
+        padding: 13px 22px;
+        border-radius: 14px;
+        font-weight: 700;
+        transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+      }
+      .button:hover { transform: translateY(-2px); }
+      .button-primary { color: #052921; background: linear-gradient(135deg, #78efd9, #3dd0bc); box-shadow: 0 16px 35px rgba(29, 200, 177, .23); }
+      .button-secondary { color: white; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); }
+      .button-dark { color: white; background: var(--ink); box-shadow: 0 12px 28px rgba(9,35,45,.18); }
+      .button-outline { color: var(--ink); border: 1px solid var(--line); background: white; }
+      .hero-note { margin-top: 18px; color: #91aeb4; font-size: .9rem; }
+
+      .product-window {
+        position: relative;
+        transform: rotate(1.2deg);
+        padding: 14px;
+        border: 1px solid rgba(255,255,255,.13);
+        border-radius: 28px;
+        background: rgba(255,255,255,.075);
+        box-shadow: 0 45px 100px rgba(0,0,0,.28);
+        backdrop-filter: blur(15px);
+      }
+      .product-window::before {
+        content: "";
+        position: absolute;
+        width: 160px; height: 160px;
+        right: -55px; top: -55px;
+        border-radius: 50%;
+        background: rgba(185, 241, 123, .13);
+        filter: blur(2px);
+      }
+      .app-shell { overflow: hidden; min-height: 480px; border-radius: 19px; background: #f8fbfb; color: var(--ink); }
+      .app-head { display: flex; align-items: center; justify-content: space-between; padding: 17px 20px; border-bottom: 1px solid #e0ebed; background: white; }
+      .app-brand { display: flex; align-items: center; gap: 9px; font-weight: 800; }
+      .mini-drop { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 9px; background: #d7f7f2; }
+      .service-live { display: flex; align-items: center; gap: 7px; color: #086c62; font-size: .72rem; font-weight: 700; }
+      .service-live i { width: 7px; height: 7px; border-radius: 50%; background: #20c6a8; box-shadow: 0 0 0 4px #daf6f1; }
+      .app-content { padding: 22px; }
+      .app-kicker { color: #73878d; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .app-title { margin-top: 3px; font: 800 1.15rem/1.3 "Manrope", sans-serif; }
+      .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
+      .metric { padding: 15px; border: 1px solid #e1eaec; border-radius: 14px; background: white; }
+      .metric span { color: #72858a; font-size: .71rem; }
+      .metric strong { display: block; margin-top: 2px; font: 800 1.45rem/1.2 "Manrope", sans-serif; }
+      .metric small { color: #0a8a6f; font-size: .67rem; font-weight: 700; }
+      .service-card { margin-top: 12px; padding: 16px; border-radius: 14px; background: #e9f8f5; }
+      .service-card-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+      .service-card strong { font-size: .85rem; }
+      .pill { padding: 5px 8px; border-radius: 999px; color: #087364; background: #c9efe8; font-size: .65rem; font-weight: 700; }
+      .check-list { display: grid; gap: 9px; margin-top: 14px; }
+      .check { display: flex; align-items: center; gap: 9px; color: #39575f; font-size: .75rem; }
+      .check b { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: white; background: #18ad94; font-size: .65rem; }
+      .report-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; padding: 12px 14px; border-radius: 12px; background: white; border: 1px solid #e1eaec; }
+      .report-row div { display: flex; align-items: center; gap: 10px; font-size: .74rem; font-weight: 700; }
+      .report-row span { color: #0c8576; font-size: .68rem; font-weight: 700; }
+
+      .audience { margin-top: -24px; position: relative; z-index: 2; }
+      .audience-card { display: grid; grid-template-columns: 1.1fr repeat(3, auto); align-items: center; gap: 28px; padding: 25px 32px; border: 1px solid var(--line); border-radius: 20px; background: white; box-shadow: 0 16px 40px rgba(6, 52, 62, .08); }
+      .audience-card p { margin: 0; color: var(--muted); }
+      .audience-card strong { color: var(--ink); }
+      .audience-item { white-space: nowrap; color: #2b5960; font-weight: 700; }
+      .audience-item span { margin-right: 7px; color: var(--aqua-dark); }
+
+      section { padding: 110px 0; }
+      .section-label { color: #0a897b; font-size: .78rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+      .section-title { max-width: 720px; margin-top: 14px; font-size: clamp(2.1rem, 4vw, 3.45rem); line-height: 1.08; }
+      .section-copy { max-width: 680px; margin: 18px 0 0; color: var(--muted); font-size: 1.05rem; }
+
+      .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 50px; }
+      .feature {
+        position: relative;
+        min-height: 245px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: white;
+        transition: transform .2s ease, box-shadow .2s ease;
+      }
+      .feature:hover { transform: translateY(-4px); box-shadow: 0 18px 50px rgba(7, 58, 65, .08); }
+      .feature-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: #06766b; background: var(--sky); font-size: 1.35rem; }
+      .feature h3 { margin-top: 22px; font-size: 1.16rem; }
+      .feature p { margin: 10px 0 0; color: var(--muted); font-size: .95rem; }
+
+      .flow { background: #eaf8f6; }
+      .flow-grid { display: grid; grid-template-columns: .8fr 1.2fr; gap: 80px; align-items: start; }
+      .steps { display: grid; gap: 15px; }
+      .step { display: grid; grid-template-columns: 48px 1fr; gap: 17px; padding: 22px; border-radius: 20px; background: white; border: 1px solid rgba(8, 103, 93, .11); }
+      .step-number { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: white; background: var(--aqua-dark); font: 800 1rem "Manrope", sans-serif; }
+      .step h3 { font-size: 1.05rem; }
+      .step p { margin: 6px 0 0; color: var(--muted); font-size: .92rem; }
+      .privacy-note { display: flex; gap: 14px; margin-top: 28px; padding: 18px 20px; color: #254c54; border-radius: 17px; background: rgba(255,255,255,.62); }
+      .privacy-note strong { display: block; color: var(--ink); }
+
+      .pricing-wrap { display: grid; grid-template-columns: 1fr .85fr; align-items: stretch; gap: 32px; }
+      .pricing-text { padding: 30px 0; }
+      .price-card { position: relative; overflow: hidden; padding: 40px; color: white; border-radius: 30px; background: var(--navy); box-shadow: var(--shadow); }
+      .price-card::before { content: ""; position: absolute; width: 260px; height: 260px; right: -105px; top: -110px; border-radius: 50%; background: rgba(65, 222, 198, .12); }
+      .price-card > * { position: relative; }
+      .price-label { color: #9fc0c5; font-size: .82rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      .price { margin-top: 12px; font: 800 clamp(2.8rem, 5vw, 4.2rem)/1 "Manrope", sans-serif; }
+      .price sup { font-size: 1.15rem; vertical-align: 1.35rem; }
+      .price small { font-size: 1rem; color: #a9c3c7; }
+      .price-card p { margin: 18px 0 26px; color: #c7d9dc; }
+      .price-card .button { width: 100%; }
+      .contact-list { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+      .contact-chip { padding: 11px 14px; border: 1px solid var(--line); border-radius: 12px; background: white; color: #345960; font-size: .92rem; }
+
+      .final-cta { padding-top: 30px; }
+      .final-card { position: relative; overflow: hidden; padding: 60px; text-align: center; color: white; border-radius: 32px; background: linear-gradient(135deg, #087b70, #0da692); }
+      .final-card::before, .final-card::after { content: ""; position: absolute; border: 1px solid rgba(255,255,255,.12); border-radius: 50%; }
+      .final-card::before { width: 300px; height: 300px; left: -150px; top: -160px; }
+      .final-card::after { width: 420px; height: 420px; right: -250px; bottom: -290px; }
+      .final-card > * { position: relative; z-index: 1; }
+      .final-card h2 { max-width: 760px; margin-inline: auto; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.08; }
+      .final-card p { max-width: 640px; margin: 18px auto 28px; color: #d8f7f1; }
+      .final-card .button { color: #075e55; background: white; }
+
+      footer { padding: 42px 0 30px; }
+      .footer-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-top: 28px; border-top: 1px solid var(--line); }
+      .footer-brand { color: var(--ink); }
+      .footer-contact { display: flex; flex-wrap: wrap; gap: 20px; color: var(--muted); font-size: .9rem; }
+      .copyright { margin-top: 24px; color: #82949a; font-size: .82rem; }
+
+      .whatsapp-float {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 20;
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        padding: 13px 17px;
+        color: white;
+        border-radius: 999px;
+        background: #16a86d;
+        box-shadow: 0 14px 35px rgba(10, 96, 62, .28);
+        font-weight: 700;
+      }
+
+      @media (max-width: 940px) {
+        .nav-links a:not(.nav-cta) { display: none; }
+        .hero { padding-top: 130px; }
+        .hero-grid, .flow-grid, .pricing-wrap { grid-template-columns: 1fr; }
+        .hero-grid { gap: 46px; }
+        .product-window { max-width: 640px; }
+        .audience-card { grid-template-columns: 1fr 1fr; }
+        .audience-card p { grid-column: 1 / -1; }
+        .features-grid { grid-template-columns: repeat(2, 1fr); }
+        .flow-grid { gap: 40px; }
+      }
+
+      @media (max-width: 640px) {
+        .container { width: min(100% - 28px, 1160px); }
+        .topbar { padding-top: 16px; }
+        .nav-cta { padding: 9px 13px; }
+        .nav-cta span { display: none; }
+        .hero { min-height: auto; padding: 115px 0 100px; }
+        h1 { font-size: clamp(2.6rem, 13vw, 4rem); }
+        .hero-copy { font-size: 1rem; line-height: 1.65; }
+        .hero-actions .button { width: 100%; }
+        .product-window { padding: 8px; border-radius: 21px; transform: none; }
+        .app-shell { min-height: auto; border-radius: 15px; }
+        .app-content { padding: 15px; }
+        .metrics { grid-template-columns: 1fr; }
+        .metric { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+        .metric strong { grid-row: 1 / span 2; grid-column: 2; }
+        .audience-card { grid-template-columns: 1fr; gap: 14px; padding: 23px; }
+        .audience-card p { grid-column: auto; }
+        section { padding: 78px 0; }
+        .features-grid { grid-template-columns: 1fr; margin-top: 34px; }
+        .feature { min-height: auto; }
+        .step { grid-template-columns: 42px 1fr; padding: 18px; }
+        .step-number { width: 42px; height: 42px; }
+        .price-card { padding: 30px 24px; }
+        .final-card { padding: 44px 22px; border-radius: 24px; }
+        .footer-row { align-items: flex-start; flex-direction: column; }
+        .footer-contact { flex-direction: column; gap: 8px; }
+        .whatsapp-float span { display: none; }
+        .whatsapp-float { width: 52px; height: 52px; padding: 0; justify-content: center; font-size: 1.25rem; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        *, *::before, *::after { transition: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container nav">
+        <a class="brand" href="#inicio" aria-label="AquaGuard, início">
+          <span class="brand-mark" aria-hidden="true">💧</span>
+          AquaGuard
+        </a>
+        <nav class="nav-links" aria-label="Navegação principal">
+          <a href="#recursos">Recursos</a>
+          <a href="#como-funciona">Como funciona</a>
+          <a href="#planos">Planos</a>
+          <a class="nav-cta" href="https://wa.me/5543988162898?text=Ol%C3%A1%2C%20quero%20conhecer%20o%20AquaGuard" target="_blank" rel="noopener"><span>Falar pelo</span> WhatsApp</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" id="inicio">
+        <div class="container hero-grid">
+          <div>
+            <span class="eyebrow"><i></i> Gestão simples e segura</span>
+            <h1>A piscina em dia. <span>As informações também.</span></h1>
+            <p class="hero-copy">O AquaGuard organiza todo o controle da piscina em um só lugar. Registra medições, produtos utilizados, serviços realizados, fotos e manutenções, gerando histórico e relatórios para o responsável acompanhar tudo com mais segurança.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="https://wa.me/5543988162898?text=Ol%C3%A1%2C%20quero%20conhecer%20o%20AquaGuard" target="_blank" rel="noopener">💬 Quero conhecer</a>
+              <a class="button button-secondary" href="#recursos">Ver o que ele faz ↓</a>
+            </div>
+            <p class="hero-note">Planos a partir de R$ 29,90</p>
+          </div>
+
+          <div class="product-window" aria-label="Exemplo do painel AquaGuard">
+            <div class="app-shell">
+              <div class="app-head">
+                <div class="app-brand"><span class="mini-drop">💧</span> AquaGuard</div>
+                <div class="service-live"><i></i> Serviço em andamento</div>
+              </div>
+              <div class="app-content">
+                <span class="app-kicker">Visão da piscina</span>
+                <div class="app-title">Piscina principal</div>
+                <div class="metrics">
+                  <div class="metric"><span>pH</span><strong>7,4</strong><small>Ideal</small></div>
+                  <div class="metric"><span>Cloro livre</span><strong>2,1</strong><small>Ideal</small></div>
+                  <div class="metric"><span>Alcalinidade</span><strong>90</strong><small>Ideal</small></div>
+                </div>
+                <div class="service-card">
+                  <div class="service-card-head"><strong>Manutenção de hoje</strong><span class="pill">Em execução</span></div>
+                  <div class="check-list">
+                    <div class="check"><b>✓</b> Medições químicas registradas</div>
+                    <div class="check"><b>✓</b> Limpeza e aspiração realizadas</div>
+                    <div class="check"><b>✓</b> Fotos adicionadas ao histórico</div>
+                  </div>
+                </div>
+                <div class="report-row"><div>▤ Relatório da manutenção</div><span>Pronto para compartilhar</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="audience">
+        <div class="container audience-card">
+          <p><strong>Controle que faz sentido</strong><br />para quem cuida e para quem acompanha.</p>
+          <div class="audience-item"><span>●</span> Condomínios</div>
+          <div class="audience-item"><span>●</span> Clubes</div>
+          <div class="audience-item"><span>●</span> Profissionais</div>
+        </div>
+      </div>
+
+      <section id="recursos">
+        <div class="container">
+          <span class="section-label">Tudo organizado</span>
+          <h2 class="section-title">Chega de anotações soltas e informações perdidas.</h2>
+          <p class="section-copy">O AquaGuard reúne a rotina da piscina em um histórico claro, fácil de consultar e pronto para apresentar quando necessário.</p>
+
+          <div class="features-grid">
+            <article class="feature"><div class="feature-icon">◉</div><h3>Medições químicas</h3><p>Registre pH, cloro livre, alcalinidade e estabilizador com as faixas de referência para cada medição.</p></article>
+            <article class="feature"><div class="feature-icon">✓</div><h3>Serviços realizados</h3><p>Acompanhe início, término, responsável e todas as atividades executadas em cada manutenção.</p></article>
+            <article class="feature"><div class="feature-icon">▧</div><h3>Fotos e observações</h3><p>Guarde imagens, ocorrências, produtos aplicados e recomendações junto ao registro do serviço.</p></article>
+            <article class="feature"><div class="feature-icon">≋</div><h3>Histórico completo</h3><p>Consulte o que foi feito em cada piscina sem depender de papéis, mensagens ou memória.</p></article>
+            <article class="feature"><div class="feature-icon">↗</div><h3>Relatórios claros</h3><p>Filtre por local, piscina e período para acompanhar as manutenções e compartilhar os resultados.</p></article>
+            <article class="feature"><div class="feature-icon">⌂</div><h3>Locais independentes</h3><p>Cada local mantém seus usuários, piscinas e dados separados, com visão geral para o administrador.</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="flow" id="como-funciona">
+        <div class="container flow-grid">
+          <div>
+            <span class="section-label">Rotina simples</span>
+            <h2 class="section-title">Do início do serviço ao relatório final.</h2>
+            <p class="section-copy">O registro acompanha o trabalho como ele acontece e deixa tudo disponível para consulta depois.</p>
+            <div class="privacy-note"><span aria-hidden="true">🔒</span><div><strong>Dados separados por local</strong>Cada usuário acessa somente as informações do local ao qual está vinculado.</div></div>
+          </div>
+          <div class="steps">
+            <article class="step"><div class="step-number">01</div><div><h3>Inicie o serviço</h3><p>Selecione o local e a piscina. O AquaGuard registra quem começou e o horário.</p></div></article>
+            <article class="step"><div class="step-number">02</div><div><h3>Registre o que foi feito</h3><p>Inclua medições, produtos, serviços, observações e fotos da manutenção.</p></div></article>
+            <article class="step"><div class="step-number">03</div><div><h3>Finalize e acompanhe</h3><p>O serviço entra no histórico e pode ser consultado em relatórios ou compartilhado pelo WhatsApp.</p></div></article>
+          </div>
+        </div>
+      </section>
+
+      <section id="planos">
+        <div class="container pricing-wrap">
+          <div class="pricing-text">
+            <span class="section-label">Comece agora</span>
+            <h2 class="section-title">Mais controle por um valor que cabe na rotina.</h2>
+            <p class="section-copy">Entre em contato para conhecer o AquaGuard, tirar suas dúvidas e encontrar o plano adequado para sua necessidade.</p>
+            <div class="contact-list">
+              <a class="contact-chip" href="mailto:leoferrareto2013@gmail.com?subject=Quero%20conhecer%20o%20AquaGuard">✉ leoferrareto2013@gmail.com</a>
+              <a class="contact-chip" href="tel:+5543988162898">☎ (43) 9 8816-2898</a>
+            </div>
+          </div>
+          <div class="price-card">
+            <span class="price-label">Planos a partir de</span>
+            <div class="price"><sup>R$</sup> 29,90</div>
+            <p>Organize os cuidados da piscina e tenha as informações sempre à mão.</p>
+            <a class="button button-primary" href="https://wa.me/5543988162898?text=Ol%C3%A1%2C%20tenho%20interesse%20no%20AquaGuard%20e%20quero%20saber%20mais%20sobre%20os%20planos." target="_blank" rel="noopener">Conversar sobre os planos</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta">
+        <div class="container final-card">
+          <h2>Cuide da piscina com informação, histórico e tranquilidade.</h2>
+          <p>Conheça o AquaGuard e veja como deixar a manutenção mais organizada e transparente.</p>
+          <a class="button" href="https://wa.me/5543988162898?text=Ol%C3%A1%2C%20quero%20uma%20demonstra%C3%A7%C3%A3o%20do%20AquaGuard." target="_blank" rel="noopener">Pedir uma demonstração</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="container">
+        <div class="footer-row">
+          <a class="brand footer-brand" href="#inicio"><span class="brand-mark" aria-hidden="true">💧</span>AquaGuard</a>
+          <div class="footer-contact"><a href="mailto:leoferrareto2013@gmail.com">leoferrareto2013@gmail.com</a><a href="tel:+5543988162898">(43) 9 8816-2898</a></div>
+        </div>
+        <div class="copyright">© 2026 AquaGuard. Controle simples para piscinas bem cuidadas.</div>
+      </div>
+    </footer>
+
+    <a class="whatsapp-float" href="https://wa.me/5543988162898?text=Ol%C3%A1%2C%20quero%20conhecer%20o%20AquaGuard" target="_blank" rel="noopener" aria-label="Falar sobre o AquaGuard pelo WhatsApp">💬 <span>Fale comigo</span></a>
+  </body>
+</html>
